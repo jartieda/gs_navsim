@@ -1,0 +1,139 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <title>Robotic Navigation Simulator</title>
+  <style>
+    body { margin: 0; overflow: hidden; font-family: Arial, sans-serif; }
+    #canvas { width: 100vw; height: 100vh; display: block; }
+    #controls { 
+      position: absolute; 
+      top: 10px; 
+      left: 10px; 
+      z-index: 10; 
+      background: rgba(0,0,0,0.8); 
+      color: white;
+      padding: 15px; 
+      border-radius: 8px; 
+      min-width: 200px;
+      font-size: 12px;
+    }
+    #controls button {
+      margin: 5px 0;
+      padding: 8px 12px;
+      background: #4CAF50;
+      color: white;
+      border: none;
+      border-radius: 4px;
+      cursor: pointer;
+      width: 100%;
+    }
+    #controls button:hover {
+      background: #45a049;
+    }
+    #resetRobot {
+      background: #ff6b6b !important;
+    }
+    #resetRobot:hover {
+      background: #ff5252 !important;
+    }
+    #controls input[type="file"] {
+      margin: 5px 0;
+      padding: 5px;
+      width: 100%;
+    }
+    #controls select {
+      margin: 5px 0;
+      padding: 5px;
+      width: 100%;
+      background: #333;
+      color: white;
+      border: 1px solid #555;
+      border-radius: 4px;
+    }
+    #info, #robotInfo, #helpInfo, #cameraInfo {
+      margin-top: 10px;
+      padding: 8px;
+      background: rgba(255,255,255,0.1);
+      border-radius: 4px;
+      font-size: 11px;
+    }
+    #robotInfo, #cameraInfo {
+      font-family: monospace;
+    }
+    #helpInfo {
+      font-size: 10px;
+      opacity: 0.8;
+    }
+  </style>
+</head>
+<body>
+  <div id="controls">
+    <input type="file" id="plyLoader" accept=".ply" />
+    <button id="exportImage">Export Image</button>
+    <button id="saveToServer">Save to Server</button>
+    <button id="resetRobot">Reset Robot Position</button>
+    <div>
+      <label for="materialSelector">Render Mode:</label>
+      <select id="materialSelector">
+        <option value="gaussian">Gaussian Splats</option>
+        <option value="ellipse">3D Ellipse</option>
+        <option value="object">3D Objects</option>
+        <option value="points">Simple Points</option>
+      </select>
+    </div>
+    <div>
+      <label for="harmonicDegree">SH Degree:</label>
+      <select id="harmonicDegree">
+        <option value="0">Degree 0 (DC only)</option>
+        <option value="1">Degree 1</option>
+        <option value="2" selected>Degree 2</option>
+        <option value="3">Degree 3 (Full)</option>
+      </select>
+    </div>
+    <div>
+      <label for="pointScale">Point Scale:</label>
+      <input type="number" id="pointScale" min="1" max="100000" value="100" step="1" style="width: 80px;">
+    </div>
+    <div>
+      <label for="chiScale">Chi Scale:</label>
+      <input type="number" id="chiScale" min="0.1" max="100" value="1.0" step="0.1" style="width: 80px;">
+    </div>
+    <div>
+      <label for="redCircleEnabled">Red Circle:</label>
+      <input type="checkbox" id="redCircleEnabled" style="margin-left: 10px;">
+    </div>
+    <div>
+      <label>Use arrow keys to navigate manually</label>
+    </div>
+    <div id="info">
+      <span id="fileInfo">No file loaded</span>
+    </div>
+    <div id="robotInfo">
+      <strong>Robot Position:</strong><br>
+      X: <span id="robotX">0.00</span><br>
+      Y: <span id="robotY">0.00</span><br>
+      Z: <span id="robotZ">0.00</span><br>
+      Rotation: <span id="robotRotation">0.00°</span>
+    </div>
+    <div id="cameraInfo">
+      <strong>Camera Position:</strong><br>
+      X: <span id="cameraX">0.00</span><br>
+      Y: <span id="cameraY">1.00</span><br>
+      Z: <span id="cameraZ">5.00</span><br>
+      Look At: <span id="cameraTarget">Origin</span>
+    </div>
+    <div id="helpInfo">
+      <strong>Controls:</strong><br>
+      • Arrow Keys / WASD: Move<br>
+      • Grid: Floor reference<br>
+      • Axes: Red=X, Green=Y, Blue=Z<br>
+      • Orange cone: Robot direction
+    </div>
+  </div>
+  <canvas id="canvas"></canvas>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/three@0.154.0/examples/js/loaders/PLYLoader.js"></script>
+  <script type="module" src="main.js"></script>
+</body>
+</html>
