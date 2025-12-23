@@ -1,0 +1,6 @@
+backend/node_modules/
+# Archivos PLY grandes
+*.ply
+backend/*.ply
+# Archivos Zone.Identifier de Windows
+*.Zone.Identifier
