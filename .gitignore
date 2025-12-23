@@ -3,4 +3,4 @@ backend/node_modules/
 *.ply
 backend/*.ply
 # Archivos Zone.Identifier de Windows
-*.Zone.Identifier
+*Zone.Identifier
