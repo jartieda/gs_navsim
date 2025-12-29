@@ -1,5 +1,6 @@
 // utils.js
 // Utility functions for the robotic navigation simulator
+import * as THREE from 'three';
 
 export class RobotController {
   constructor(position = { x: 0, y: 0, z: 0 }, rotation = 0) {

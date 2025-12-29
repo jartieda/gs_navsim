@@ -14,7 +14,9 @@ This web-based simulator uses Three.js to visualize robotic navigation with Gaus
 - `backend/server.js`: WebSocket server for robot commands
 
 ## Usage
-1. Start the backend server: `node backend/server.js`
-2. Open `frontend/index.html` in a browser
+1. Start the backend server: `cd backend && npm start` or `node backend/server.js`
+2. Open your browser and go to: `http://localhost:3000`
 3. Load a `.ply` file and use arrow keys or socket commands to navigate
 4. Export images using the button
+
+**Note**: The frontend is now served directly from the backend server, no need to open HTML files separately.

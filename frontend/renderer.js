@@ -1,8 +1,11 @@
 // renderer.js
 // Handles Three.js scene setup, PLY loading, Gaussian splatting, and image export
+import * as THREE from 'three';
 
 import { createGaussianMaterial, generateRandomColors, centerGeometry } from './utils.js';
 import { GaussianSplatLoader } from './gaussian-splat-loader.js';
+
+let currentPointCloud = null;
 
 export function setupScene(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, preserveDrawingBuffer: true });
@@ -120,6 +123,17 @@ function createAxisGizmo() {
   return group;
 }
 
+function clearExistingRenderObjects(scene) {
+  // Clear existing point clouds
+  const existingPoints = scene.children.filter(child => child.type === 'Points');
+  existingPoints.forEach(points => scene.remove(points));
+  
+  // Clear existing object mode meshes (all types)
+  const existingObjects = scene.children.filter(child => child.userData && 
+    (child.userData.type === 'object_mode' || child.userData.type === 'ellipse_mode' || child.userData.type === 'object_fuzz_mode'));
+  existingObjects.forEach(obj => scene.remove(obj));
+}
+
 export async function loadPLY(file) {
   try {
     console.log('Loading PLY file:', file.name);
@@ -160,6 +174,7 @@ export async function loadPLY(file) {
           }
           
           const points = new THREE.Points(geometry, material);
+          
           points.userData = { type: 'standard_ply' };
           resolve(points);
         } catch (error) {
@@ -172,16 +187,169 @@ export async function loadPLY(file) {
     });
   }
 }
+function updateSorting(scene, camera) {
+    const existingObjects = scene.children.filter(child => child.userData && 
+        (child.userData.type === 'object_mode' || child.userData.type === 'ellipse_mode' || child.userData.type === 'object_fuzz_mode'));
+
+    const cameraPosition = camera.position;
+
+    existingObjects.forEach(objectGroup => {
+        // Find the InstancedMesh within the group
+        let instancedMesh = null;
+        let positions = null;
+        let numSplats = 0;
+
+        if (objectGroup.children && objectGroup.children.length > 0) {
+            // For object_fuzz_mode, get the first layer's InstancedMesh
+            instancedMesh = objectGroup.children[0];
+            if (instancedMesh && instancedMesh.isInstancedMesh) {
+                numSplats = instancedMesh.count;
+                
+                // Extract positions from instance matrices
+                positions = new Float32Array(numSplats * 3);
+                const matrix = new THREE.Matrix4();
+                const position = new THREE.Vector3();
+                
+                for (let i = 0; i < numSplats; i++) {
+                    instancedMesh.getMatrixAt(i, matrix);
+                    position.setFromMatrixPosition(matrix);
+                    positions[i * 3] = position.x;
+                    positions[i * 3 + 1] = position.y;
+                    positions[i * 3 + 2] = position.z;
+                }
+            }
+        }
+
+        if (positions && numSplats > 0) {
+            // Initialize sorting arrays
+            const depthData = new Float32Array(numSplats);
+            const indices = new Array(numSplats);
+            
+            for (let i = 0; i < numSplats; i++) {
+                indices[i] = i;
+            }
+
+            // 1. Calculate squared distances (faster than square root)
+            for (let i = 0; i < numSplats; i++) {
+                const x = positions[i * 3];
+                const y = positions[i * 3 + 1];
+                const z = positions[i * 3 + 2];
+                
+                // Euclidean distance from camera to splat
+                depthData[i] = Math.pow(x - cameraPosition.x, 2) + 
+                              Math.pow(y - cameraPosition.y, 2) + 
+                              Math.pow(z - cameraPosition.z, 2);
+            }
+
+            // 2. Sort indices from far to near (Back-to-Front)
+            indices.sort((a, b) => depthData[b] - depthData[a]);
+
+            // 3. Store original matrices and attributes before reordering
+            const originalMatrices = [];
+            const originalColors = [];
+            const originalOpacities = [];
+            const matrix = new THREE.Matrix4();
+            const color = new THREE.Color();
+
+            for (let i = 0; i < numSplats; i++) {
+                instancedMesh.getMatrixAt(i, matrix);
+                originalMatrices[i] = matrix.clone();
+                
+                if (instancedMesh.instanceColor) {
+                    instancedMesh.getColorAt(i, color);
+                    originalColors[i] = color.clone();
+                }
+                
+                if (instancedMesh.geometry.attributes.instanceOpacity) {
+                    originalOpacities[i] = instancedMesh.geometry.attributes.instanceOpacity.array[i];
+                }
+            }
+
+            // 4. Reassign matrices in InstancedMesh according to new order
+            objectGroup.children.forEach((childMesh) => {
+                if (childMesh.isInstancedMesh) {
+                    for (let j = 0; j < numSplats; j++) {
+                        const originalIdx = indices[j];
+                        
+                        // Set matrix from original
+                        childMesh.setMatrixAt(j, originalMatrices[originalIdx]);
+                        
+                        // Set color if available
+                        if (childMesh.instanceColor && originalColors[originalIdx]) {
+                            childMesh.setColorAt(j, originalColors[originalIdx]);
+                        }
+                        
+                        // Update opacity attribute if available
+                        if (childMesh.geometry.attributes.instanceOpacity && originalOpacities[originalIdx] !== undefined) {
+                            childMesh.geometry.attributes.instanceOpacity.array[j] = originalOpacities[originalIdx];
+                        }
+                    }
+                    
+                    // Mark for update
+                    childMesh.instanceMatrix.needsUpdate = true;
+                    if (childMesh.instanceColor) {
+                        childMesh.instanceColor.needsUpdate = true;
+                    }
+                    if (childMesh.geometry.attributes.instanceOpacity) {
+                        childMesh.geometry.attributes.instanceOpacity.needsUpdate = true;
+                    }
+                }
+            });
+        }
+    });
+}
+
+function updateSplatUniforms(camera) {
+  const width = window.innerWidth;
+  const height = window.innerHeight;
+  const fovRad = THREE.MathUtils.degToRad(camera.fov);
+  
+  // Distancia focal en píxeles
+  const fy = height / (2 * Math.tan(fovRad / 2));
+  const fx = fy; // Three.js asume píxeles cuadrados generalmente
+
+  if (!currentPointCloud.material || !currentPointCloud.material.uniforms){
+    console.warn("currentPointCloud.material or its uniforms are not defined.");
+    return;
+  } else{
+    if (!currentPointCloud.material.uniforms.focal || !currentPointCloud.material.uniforms.viewport) {
+      console.warn("currentPointCloud.material.uniforms.focal or viewport are not defined.");
+      return;
+    }
+      currentPointCloud.material.uniforms.focal.value.set(fx, fy);
+      currentPointCloud.material.uniforms.viewport.value.set(width, height);
+  }
+}
+
+function updatePointCloudSorting(scene, camera) {
+  // Find point clouds in the scene that have Gaussian splat loaders
+  const pointClouds = scene.children.filter(child => 
+    child.type === 'Points' && 
+    child.userData && 
+    child.userData.loader && 
+    typeof child.userData.loader.updatePointCloudSorting === 'function'
+  );
+  
+  pointClouds.forEach(pointCloud => {
+    // Call the sorting method from the loader
+    pointCloud.userData.loader.updatePointCloudSorting(pointCloud, camera);
+  });
+}
+
+// Export the sorting function for use in main render loop
+export function updateObjectSorting(scene, camera) {
+  updateSplatUniforms(camera);
+  updateSorting(scene, camera);
+  
+  // Also handle point cloud sorting for Gaussian splats
+  updatePointCloudSorting(scene, camera);
+}
 
 export function renderGaussianSplatting(scene, pointCloud) {
-  // Clear existing point clouds
-  const existingPoints = scene.children.filter(child => child.type === 'Points');
-  existingPoints.forEach(points => scene.remove(points));
-  
-  // Clear existing object mode meshes (Group with ellipsoids)
-  const existingObjects = scene.children.filter(child => child.userData && child.userData.type === 'object_mode');
-  existingObjects.forEach(obj => scene.remove(obj));
-  
+  // this creates the point cloud that will be rendered with different shaders
+  // Clear existing render objects
+  clearExistingRenderObjects(scene);
+  currentPointCloud = pointCloud;
   // Add new point cloud to scene
   scene.add(pointCloud);
   
@@ -197,37 +365,397 @@ export function renderGaussianSplatting(scene, pointCloud) {
   return { center, distance };
 }
 
-export function renderObjectMode(scene, pointCloud) {
-  // Clear existing point clouds
-  const existingPoints = scene.children.filter(child => child.type === 'Points');
-  existingPoints.forEach(points => scene.remove(points));
-  
-  // Clear existing object mode meshes
-  const existingObjects = scene.children.filter(child => child.userData && child.userData.type === 'object_mode');
-  existingObjects.forEach(obj => scene.remove(obj));
+export function renderEllipseMode(scene, pointCloud, scale = 100) {
+  // Clear existing render objects
+  clearExistingRenderObjects(scene);
   
   const geometry = pointCloud.geometry;
   const positions = geometry.attributes.position.array;
   const scales = geometry.attributes.scale ? geometry.attributes.scale.array : null;
   const rotations = geometry.attributes.rotation ? geometry.attributes.rotation.array : null;
   const colors = geometry.attributes.color ? geometry.attributes.color.array : null;
+  const opacities = geometry.attributes.opacity ? geometry.attributes.opacity.array : null;
+  
+  const vertexCount = positions.length / 3;
+  
+  // Create a group to hold all ellipse sprites
+  const ellipseGroup = new THREE.Group();
+  ellipseGroup.userData = { type: 'ellipse_mode' };
+  
+  // Create custom shader material for gradient ellipses
+  const ellipseMaterial = createGradientEllipseMaterial();
+  
+  // Always use instanced rendering for better performance
+  console.log(`Creating ${vertexCount} instanced ellipse points with gradient texture at ${scale}% scale.`);
+  return renderEllipseModeInstanced(scene, positions, scales, rotations, colors, opacities, vertexCount, ellipseMaterial, scale);
+}
+
+function createGradientEllipseMaterial() {
+  // Create a custom shader material for radial gradient ellipses
+  const vertexShader = `
+    attribute float scale;
+    attribute vec3 color;
+    
+    varying vec3 vColor;
+    varying vec2 vUv;
+    
+    void main() {
+      vColor = color;
+      vUv = uv;
+      
+      vec4 mvPosition = modelViewMatrix * vec4(position, 1.0);
+      gl_Position = projectionMatrix * mvPosition;
+      
+      // Improved point size calculation with clamping
+      float distance = max(abs(mvPosition.z), 1.0); // Prevent division by zero
+      gl_PointSize = (scale * 10000.0) / distance; // Reduced from 1000.0 to 100.0
+      gl_PointSize = clamp(gl_PointSize, 8.0, 20000.0); // Better size limits
+    }
+  `;
+  
+  const fragmentShader = `
+    varying vec3 vColor;
+    varying vec2 vUv;
+    
+    void main() {
+      vec2 center = vec2(0.5, 0.5);
+      float dist = distance(gl_PointCoord, center);
+      
+      // Create elliptical falloff instead of circular
+      vec2 ellipseUv = (gl_PointCoord - center) * 2.0;
+      float ellipticalDist = length(vec2(ellipseUv.x * 1.2, ellipseUv.y * 0.8));
+      
+      // Create smooth gradient from center to edge
+      float alpha = 1.0 - smoothstep(0.0, 0.5, ellipticalDist);
+      alpha = alpha * alpha; // Square for more solid center
+      
+      if (alpha < 0.01) discard;
+      
+      // Improved color calculation - prevent overly dark colors
+      vec3 finalColor = vColor * (0.7 + 0.3 * alpha); // Brighter base color
+      finalColor = clamp(finalColor, 0.1, 0.9); // Prevent pure black/white
+      
+      gl_FragColor = vec4(finalColor, alpha * 0.8);
+    }
+  `;
+  
+  return new THREE.ShaderMaterial({
+    vertexShader: vertexShader,
+    fragmentShader: fragmentShader,
+    transparent: true,
+    depthWrite: false,
+    blending: THREE.NormalBlending // Changed from AdditiveBlending to prevent white saturation
+  });
+}
+
+function renderEllipseModeInstanced(scene, positions, scales, rotations, colors, opacities, vertexCount, baseMaterial, globalScale = 100) {
+  // For large datasets, use a more optimized approach with Points and custom shader
+  const ellipseGroup = new THREE.Group();
+  ellipseGroup.userData = { type: 'ellipse_mode' };
+  
+  // Convert percentage to multiplier
+  const scaleMultiplierGlobal = globalScale / 100;
+  
+  // Create geometry for all points
+  const geometry = new THREE.BufferGeometry();
+  const positionBuffer = new THREE.Float32BufferAttribute(positions, 3);
+  const colorBuffer = colors ? new THREE.Float32BufferAttribute(colors, 3) : null;
+  const scaleBuffer = new THREE.Float32BufferAttribute(vertexCount, 1);
+  
+  // Set up scale buffer with global scale applied
+  for (let i = 0; i < vertexCount; i++) {
+    const i3 = i * 3;
+    const avgScale = scales ? (Math.abs(scales[i3]) + Math.abs(scales[i3 + 1]) + Math.abs(scales[i3 + 2])) / 3 : 0.1;
+    scaleBuffer.setX(i, avgScale * 0.5 * scaleMultiplierGlobal); // Reduced from 50 to 0.5 for proper visibility
+  }
+  
+  geometry.setAttribute('position', positionBuffer);
+  if (colorBuffer) geometry.setAttribute('color', colorBuffer);
+  geometry.setAttribute('scale', scaleBuffer);
+  
+  // Add individual opacity attribute if available
+  if (opacities) {
+    geometry.setAttribute('instanceOpacity', new THREE.InstancedBufferAttribute(opacities, 1));
+  }
+  
+  // Use Points with custom material for performance
+  const pointsMaterial = new THREE.PointsMaterial({
+    size: 2, // Reduced from 20 to 2 for proper size
+    transparent: true,
+    opacity: 0.8,
+    vertexColors: !!colors,
+    map: createEllipseTexture(),
+    alphaTest: 0.01,
+    blending: THREE.NormalBlending, // Changed from AdditiveBlending to fix white rendering
+    depthWrite: false
+  });
+  
+  // Add shader modification for individual opacity
+  if (opacities) {
+    pointsMaterial.onBeforeCompile = (shader) => {
+      // 1. Declare attribute in Vertex Shader
+      shader.vertexShader = `
+        attribute float instanceOpacity;
+        varying float vInstanceOpacity;
+        ${shader.vertexShader}
+      `.replace(
+        '#include <begin_vertex>',
+        `
+        #include <begin_vertex>
+        vInstanceOpacity = instanceOpacity;
+        `
+      );
+      
+      // 2. Apply opacity in Fragment Shader
+      shader.fragmentShader = `
+        varying float vInstanceOpacity;
+        ${shader.fragmentShader}
+      `.replace(
+        '#include <alphamap_fragment>',
+        `
+        #include <alphamap_fragment>
+        diffuseColor.a = vInstanceOpacity; // Use individual opacity directly
+        `
+      );
+    };
+  }
+  
+  const points = new THREE.Points(geometry, baseMaterial);
+  ellipseGroup.add(points);
+  scene.add(ellipseGroup);
+  
+  // Calculate bounding box
+  const box = new THREE.Box3().setFromObject(ellipseGroup);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const distance = maxDim * 2;
+  
+  return { center, distance };
+}
+
+function createEllipseTexture() {
+  // Create a texture for the elliptical gradient
+  const canvas = document.createElement('canvas');
+  const size = 64;
+  canvas.width = size;
+  canvas.height = size;
+  
+  const context = canvas.getContext('2d');
+  const gradient = context.createRadialGradient(
+    size / 2, size / 2, 0,    // Inner circle (center, no radius)
+    size / 2, size / 2, size / 2  // Outer circle (center, full radius)
+  );
+  
+  // Create gradient with better color multiplier (not pure white)
+  gradient.addColorStop(0, 'rgba(255, 255, 255, 1.0)');    // Full opacity center
+  gradient.addColorStop(0.3, 'rgba(255, 255, 255, 0.8)');  // Still strong
+  gradient.addColorStop(0.7, 'rgba(255, 255, 255, 0.3)');  // Fading
+  gradient.addColorStop(1, 'rgba(255, 255, 255, 0.0)');    // Transparent edge
+  
+  context.fillStyle = gradient;
+  
+  // Create elliptical shape by scaling
+  context.save();
+  context.scale(1.2, 0.8); // Make it elliptical
+  context.fillRect(0, 0, size / 1.2, size / 0.8);
+  context.restore();
+  
+  const texture = new THREE.CanvasTexture(canvas);
+  texture.needsUpdate = true;
+  return texture;
+}
+
+export function renderObjectFuzzMode(scene, pointCloud, scale = 100) {
+  // Clear existing render objects
+  clearExistingRenderObjects(scene);
+  
+  const geometry = pointCloud.geometry;
+  const positions = geometry.attributes.position.array;
+  const scales = geometry.attributes.scale ? geometry.attributes.scale.array : null;
+  const rotations = geometry.attributes.rotation ? geometry.attributes.rotation.array : null;
+  const colors = geometry.attributes.color ? geometry.attributes.color.array : null;
+  const opacities = geometry.attributes.opacity ? geometry.attributes.opacity.array : null;
+  const vertexCount = positions.length / 3;
+  
+  // Always use instanced rendering for better performance
+  console.log(`Creating ${vertexCount} instanced fuzz ellipsoids with 3 layers at ${scale}% scale.`);
+  return renderObjectFuzzModeInstanced(scene, positions, scales, rotations, colors, vertexCount, opacities, scale);
+}
+
+function renderObjectFuzzModeInstanced(scene, positions, scales, rotations, colors, vertexCount, opacities, globalScale = 100) {
+  // Create a group to hold the instanced meshes
+  const objectGroup = new THREE.Group();
+  objectGroup.userData = { type: 'object_fuzz_mode' };
+  
+  // Create ellipsoid geometry
+  const ellipsoidGeometry = new THREE.SphereGeometry(1, 12, 8); // Lower resolution for performance
+  //ellipsoidGeometry.setAttribute('instanceOpacity', new THREE.InstancedBufferAttribute(opacities, 1));
+  // Convert percentage to multiplier
+  const scaleMultiplierGlobal = globalScale / 100;
+  
+  // Create multiple layers of instanced meshes for fuzz effect
+  const layers = 3;
+  for (let layer = 0; layer < layers; layer++) {
+    // Create separate geometry for each layer to have independent opacity attributes
+    const layerGeometry = new THREE.SphereGeometry(1, 12, 8);
+    
+    // Add individual opacity attribute for this layer, adjusted by layer opacity
+    if (opacities) {
+      const layerOpacities2 = new Float32Array(vertexCount);      
+      for (let i = 0; i < vertexCount; i++) {
+        // Combine base layer opacity with individual point opacity
+        layerOpacities2[i] = opacities[i] - layer * 0.20; 
+      }
+      layerGeometry.setAttribute('instanceOpacity', new THREE.InstancedBufferAttribute(layerOpacities2, 1));
+    }
+    
+    const material = new THREE.MeshBasicMaterial({
+      transparent: true,
+      opacity: 0.1, // Set to 1.0 since we're handling opacity in the shader
+      fog: false,
+      //blending: THREE.AdditiveBlending, // Común en Gaussian Splatting pero te lo deja todo blanco
+      depthWrite: false 
+    });
+
+    material.onBeforeCompile = (shader) => {
+        // 1. Declarar el atributo en el Vertex Shader
+        shader.vertexShader = `
+            attribute float instanceOpacity;
+            varying float vInstanceOpacity;
+            ${shader.vertexShader}
+        `.replace(
+            '#include <begin_vertex>',
+            `
+            #include <begin_vertex>
+            vInstanceOpacity = instanceOpacity;
+            `
+        );
+
+        // 2. Aplicar la opacidad en el Fragment Shader - usar directamente la opacidad calculada
+        shader.fragmentShader = `
+            varying float vInstanceOpacity;
+            ${shader.fragmentShader}
+        `.replace(
+            '#include <alphamap_fragment>',
+            `
+            #include <alphamap_fragment>
+            diffuseColor.a = vInstanceOpacity; // Use calculated opacity directly, not multiply
+            `
+        );
+    };
+    const instancedMesh = new THREE.InstancedMesh(layerGeometry, material, vertexCount);
+    
+    // Set up instance matrices and colors
+    const matrix = new THREE.Matrix4();
+    const quaternion = new THREE.Quaternion();
+    const position = new THREE.Vector3();
+    const scale = new THREE.Vector3();
+    
+    const scaleMultiplier = 1 + layer * 0.4; // Each layer is 40% larger
+    
+    for (let i = 0; i < vertexCount; i++) {
+      const i3 = i * 3;
+      const i4 = i * 4;
+      
+      // Set position
+      position.set(positions[i3], positions[i3 + 1], positions[i3 + 2]);
+      
+      // Set scale from Gaussian scale parameters with layer multiplier and global scale
+      if (scales) {
+        scale.set(
+          scales[i3] * scaleMultiplier * scaleMultiplierGlobal, 
+          scales[i3 + 1] * scaleMultiplier * scaleMultiplierGlobal, 
+          scales[i3 + 2] * scaleMultiplier * scaleMultiplierGlobal
+        );
+      } else {
+        const defaultScale = (0.1 + layer * 0.02) * scaleMultiplier * scaleMultiplierGlobal;
+        scale.set(defaultScale, defaultScale, defaultScale);
+      }
+      
+      // Set rotation from quaternion
+      if (rotations) {
+        quaternion.set(
+          rotations[i4],     // x
+          rotations[i4 + 1], // y
+          rotations[i4 + 2], // z
+          rotations[i4 + 3]  // w
+        );
+      } else {
+        quaternion.set(0, 0, 0, 1); // Default quaternion
+      }
+      
+      // Compose matrix from position, quaternion, and scale
+      matrix.compose(position, quaternion, scale);
+      instancedMesh.setMatrixAt(i, matrix);
+      
+      // Set color if available
+      if (colors) {
+        const baseColor = new THREE.Color(colors[i3], colors[i3 + 1], colors[i3 + 2]);
+        // Add slight glow effect based on layer
+        const glowColor = baseColor.clone().multiplyScalar(1 + layer * 0.1);
+        instancedMesh.setColorAt(i, glowColor);
+      } else {
+        const glowColor = new THREE.Color(0xff6600).multiplyScalar(1 + layer * 0.1);
+        instancedMesh.setColorAt(i, glowColor);
+      }
+    }
+    
+    // Update instance matrix and colors
+    instancedMesh.instanceMatrix.needsUpdate = true;
+    if (instancedMesh.instanceColor) {
+      instancedMesh.instanceColor.needsUpdate = true;
+    }
+    
+    objectGroup.add(instancedMesh);
+  } // End of layers loop
+  
+  // Add the group to the scene
+  scene.add(objectGroup);
+  
+  // Calculate bounding box for camera positioning
+  const box = new THREE.Box3().setFromObject(objectGroup);
+  const center = box.getCenter(new THREE.Vector3());
+  const size = box.getSize(new THREE.Vector3());
+  
+  // Position camera to view the entire object collection
+  const maxDim = Math.max(size.x, size.y, size.z);
+  const distance = maxDim * 2;
+  
+  return { center, distance };
+}
+
+export function renderObjectMode(scene, pointCloud, scale = 100) {
+  // Clear existing render objects
+  clearExistingRenderObjects(scene);
+  
+  const geometry = pointCloud.geometry;
+  const positions = geometry.attributes.position.array;
+  const scales = geometry.attributes.scale ? geometry.attributes.scale.array : null;
+  const rotations = geometry.attributes.rotation ? geometry.attributes.rotation.array : null;
+  const colors = geometry.attributes.color ? geometry.attributes.color.array : null;
+  const opacities = geometry.attributes.opacity ? geometry.attributes.opacity.array : null;
   
   const vertexCount = positions.length / 3;
   
   // For performance, use different approaches based on vertex count
   if (vertexCount > 10000) {
-    console.log(`Large dataset detected (${vertexCount} points). Using instanced rendering for performance.`);
-    return renderObjectModeInstanced(scene, positions, scales, rotations, colors, vertexCount);
+    console.log(`Large dataset detected (${vertexCount} points). Using instanced rendering for performance at ${scale}% scale.`);
+    return renderObjectModeInstanced(scene, positions, scales, rotations, colors, opacities, vertexCount, scale);
   } else {
-    console.log(`Creating ${vertexCount} individual ellipsoid meshes.`);
-    return renderObjectModeIndividual(scene, positions, scales, rotations, colors, vertexCount);
+    console.log(`Creating ${vertexCount} individual ellipsoid meshes at ${scale}% scale.`);
+    return renderObjectModeIndividual(scene, positions, scales, rotations, colors, opacities, vertexCount, scale);
   }
 }
 
-function renderObjectModeIndividual(scene, positions, scales, rotations, colors, vertexCount) {
+function renderObjectModeIndividual(scene, positions, scales, rotations, colors, opacities, vertexCount, globalScale = 100) {
   // Create a group to hold all ellipsoid meshes
   const objectGroup = new THREE.Group();
   objectGroup.userData = { type: 'object_mode' };
+  
+  // Convert percentage to multiplier
+  const scaleMultiplierGlobal = globalScale / 100;
   
   // Create ellipsoid geometry (we'll reuse this for all instances)
   const ellipsoidGeometry = new THREE.SphereGeometry(1, 16, 12);
@@ -237,11 +765,14 @@ function renderObjectModeIndividual(scene, positions, scales, rotations, colors,
     const i3 = i * 3;
     const i4 = i * 4;
     
-    // Create material with the point's color
+    // Get individual opacity
+    const pointOpacity = opacities ? opacities[i] : 0.7;
+    
+    // Create material with the point's color and opacity
     const material = new THREE.MeshLambertMaterial({
       color: colors ? new THREE.Color(colors[i3], colors[i3 + 1], colors[i3 + 2]) : 0xff6600,
       transparent: true,
-      opacity: 0.7
+      opacity: pointOpacity
     });
     
     // Create mesh
@@ -250,11 +781,16 @@ function renderObjectModeIndividual(scene, positions, scales, rotations, colors,
     // Set position
     mesh.position.set(positions[i3], positions[i3 + 1], positions[i3 + 2]);
     
-    // Set scale from Gaussian scale parameters
+    // Set scale from Gaussian scale parameters with global scale applied
     if (scales) {
-      mesh.scale.set(scales[i3], scales[i3 + 1], scales[i3 + 2]);
+      mesh.scale.set(
+        scales[i3] * scaleMultiplierGlobal, 
+        scales[i3 + 1] * scaleMultiplierGlobal, 
+        scales[i3 + 2] * scaleMultiplierGlobal
+      );
     } else {
-      mesh.scale.set(0.1, 0.1, 0.1); // Default scale
+      const defaultScale = 0.1 * scaleMultiplierGlobal;
+      mesh.scale.set(defaultScale, defaultScale, defaultScale);
     }
     
     // Set rotation from quaternion
@@ -286,19 +822,57 @@ function renderObjectModeIndividual(scene, positions, scales, rotations, colors,
   return { center, distance };
 }
 
-function renderObjectModeInstanced(scene, positions, scales, rotations, colors, vertexCount) {
+function renderObjectModeInstanced(scene, positions, scales, rotations, colors, opacities, vertexCount, globalScale = 100) {
   // Create a group to hold the instanced mesh
   const objectGroup = new THREE.Group();
   objectGroup.userData = { type: 'object_mode' };
   
+  // Convert percentage to multiplier
+  const scaleMultiplierGlobal = globalScale / 100;
+  
   // Create ellipsoid geometry
   const ellipsoidGeometry = new THREE.SphereGeometry(1, 12, 8); // Lower resolution for performance
+  
+  // Add individual opacity attribute if available
+  if (opacities) {
+    ellipsoidGeometry.setAttribute('instanceOpacity', new THREE.InstancedBufferAttribute(opacities, 1));
+  }
   
   // Create instanced mesh
   const material = new THREE.MeshLambertMaterial({
     transparent: true,
     opacity: 0.7
   });
+  
+  // Add shader modification for individual opacity
+  if (opacities) {
+    material.onBeforeCompile = (shader) => {
+      // 1. Declarar el atributo en el Vertex Shader
+      shader.vertexShader = `
+        attribute float instanceOpacity;
+        varying float vInstanceOpacity;
+        ${shader.vertexShader}
+      `.replace(
+        '#include <begin_vertex>',
+        `
+        #include <begin_vertex>
+        vInstanceOpacity = instanceOpacity;
+        `
+      );
+      
+      // 2. Aplicar la opacidad en el Fragment Shader
+      shader.fragmentShader = `
+        varying float vInstanceOpacity;
+        ${shader.fragmentShader}
+      `.replace(
+        '#include <alphamap_fragment>',
+        `
+        #include <alphamap_fragment>
+        diffuseColor.a = vInstanceOpacity; // Use individual opacity directly
+        `
+      );
+    };
+  }
   
   const instancedMesh = new THREE.InstancedMesh(ellipsoidGeometry, material, vertexCount);
   
@@ -315,11 +889,16 @@ function renderObjectModeInstanced(scene, positions, scales, rotations, colors, 
     // Set position
     position.set(positions[i3], positions[i3 + 1], positions[i3 + 2]);
     
-    // Set scale from Gaussian scale parameters
+    // Set scale from Gaussian scale parameters with global scale applied
     if (scales) {
-      scale.set(scales[i3], scales[i3 + 1], scales[i3 + 2]);
+      scale.set(
+        scales[i3] * scaleMultiplierGlobal, 
+        scales[i3 + 1] * scaleMultiplierGlobal, 
+        scales[i3 + 2] * scaleMultiplierGlobal
+      );
     } else {
-      scale.set(0.1, 0.1, 0.1); // Default scale
+      const defaultScale = 0.1 * scaleMultiplierGlobal;
+      scale.set(defaultScale, defaultScale, defaultScale);
     }
     
     // Set rotation from quaternion

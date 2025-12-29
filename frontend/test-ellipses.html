@@ -1,0 +1,364 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gaussian Splat Material Test - 100 Ellipses</title>
+    <style>
+        body {
+            margin: 0;
+            overflow: hidden;
+            font-family: Arial, sans-serif;
+            background: #000;
+        }
+        canvas {
+            display: block;
+        }
+        #controls {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 15px;
+            border-radius: 5px;
+            z-index: 100;
+        }
+        #controls button {
+            background: #4CAF50;
+            color: white;
+            border: none;
+            padding: 8px 12px;
+            margin: 5px;
+            border-radius: 3px;
+            cursor: pointer;
+        }
+        #controls button:hover {
+            background: #45a049;
+        }
+        #controls label {
+            display: block;
+            margin: 10px 0 5px 0;
+        }
+        #controls input[type="range"] {
+            width: 200px;
+        }
+    </style>
+</head>
+<body>
+    <div id="controls">
+        <h3>Gaussian Splat Material Test</h3>
+        <p>100 Ellipses with different orientations and axis ratios</p>
+        
+        <button id="toggleWireframe">Toggle Wireframes</button>
+        <button id="toggleGaussian">Toggle Gaussian Splats</button>
+        <button id="resetCamera">Reset Camera</button>
+        
+        <label for="harmonicDegree">Harmonic Degree:</label>
+        <select id="harmonicDegree">
+            <option value="0">Degree 0 (DC only)</option>
+            <option value="1">Degree 1</option>
+            <option value="2" selected>Degree 2</option>
+        </select>
+        
+        <label for="pointScale">Point Scale:</label>
+        <input type="range" id="pointScale" min="10" max="2000" value="500" step="10">
+        <span id="pointScaleValue">500</span>
+        
+        <label for="rotationSpeed">Auto Rotation Speed:</label>
+        <input type="range" id="rotationSpeed" min="0" max="0.02" value="0.005" step="0.001">
+        <span id="rotationSpeedValue">0.005</span>
+    </div>
+    <script type="importmap">
+        {
+            "imports": {
+                "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+                "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+            }
+        }
+    </script>
+    <!--<script src="https://cdn.jsdelivr.net/npm/three@0.154.0/build/three.min.js"></script>-->
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';    
+        // Wait for THREE to be available, then import our custom loader
+        const { GaussianSplatLoader } = await import('./gaussian-splat-loader.js');
+
+        // Scene setup
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x222222);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 5, 15);
+
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        document.body.appendChild(renderer.domElement);
+
+        // Controls
+        const controls = new OrbitControls(camera, renderer.domElement);
+        controls.enableDamping = true;
+        controls.dampingFactor = 0.05;
+
+        // Lighting
+        const ambientLight = new THREE.AmbientLight(0x404040, 0.6);
+        scene.add(ambientLight);
+
+        const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+        directionalLight.position.set(10, 10, 5);
+        scene.add(directionalLight);
+
+        // Grid helper
+        const gridHelper = new THREE.GridHelper(20, 20, 0x444444, 0x222222);
+        scene.add(gridHelper);
+
+        // Create Gaussian splat loader
+        const loader = new GaussianSplatLoader();
+
+        // Groups for different render modes
+        const wireframeGroup = new THREE.Group();
+        const gaussianGroup = new THREE.Group();
+        scene.add(wireframeGroup);
+        scene.add(gaussianGroup);
+
+        // Generate 100 ellipses in a 10x10 grid
+        const gridSize = 10;
+        const spacing = 2;
+        const ellipses = [];
+
+        for (let x = 0; x < gridSize; x++) {
+            for (let z = 0; z < gridSize; z++) {
+                const ellipseData = createEllipseData(x, z, spacing);
+                ellipses.push(ellipseData);
+                
+                // Create wireframe version
+                const wireframeMesh = createWireframeMesh(ellipseData);
+                wireframeGroup.add(wireframeMesh);
+                
+                // Create Gaussian splat version
+                const gaussianMesh = createGaussianSplatMesh(ellipseData, loader);
+                gaussianGroup.add(gaussianMesh);
+            }
+        }
+
+        function createEllipseData(gridX, gridZ, spacing) {
+            // Position in grid
+            const x = (gridX - gridSize/2) * spacing;
+            const z = (gridZ - gridSize/2) * spacing;
+            const y = 0;
+
+            // Random axis ratios (scales)
+            const scaleX = 0.2 + Math.random() * 0.6;
+            const scaleY = 0.2 + Math.random() * 0.6;
+            const scaleZ = 0.2 + Math.random() * 0.6;
+
+            // Random orientation (quaternion)
+            const euler = new THREE.Euler(
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2,
+                Math.random() * Math.PI * 2
+            );
+            const quaternion = new THREE.Quaternion().setFromEuler(euler);
+
+            // Random color
+            const color = new THREE.Color();
+            color.setHSL(Math.random(), 0.7 + Math.random() * 0.3, 0.5 + Math.random() * 0.3);
+
+            return {
+                position: [x, y, z],
+                scale: [scaleX, scaleY, scaleZ],
+                rotation: [quaternion.x, quaternion.y, quaternion.z, quaternion.w],
+                color: [color.r, color.g, color.b],
+                opacity: 0.8 + Math.random() * 0.2,
+                sh_dc: [
+                    (color.r - 0.5) / 0.28209479177387814,
+                    (color.g - 0.5) / 0.28209479177387814,
+                    (color.b - 0.5) / 0.28209479177387814
+                ]
+            };
+        }
+
+        function createWireframeMesh(ellipseData) {
+            const geometry = new THREE.SphereGeometry(1, 16, 12);
+            const material = new THREE.MeshBasicMaterial({
+                color: new THREE.Color(...ellipseData.color),
+                wireframe: true,
+                transparent: true,
+                opacity: ellipseData.opacity * 0.5
+            });
+
+            const mesh = new THREE.Mesh(geometry, material);
+            mesh.position.set(...ellipseData.position);
+            mesh.scale.set(...ellipseData.scale);
+            mesh.quaternion.set(...ellipseData.rotation);
+
+            return mesh;
+        }
+
+        function createGaussianSplatMesh(ellipseData, loader) {
+            // Create a single vertex for this ellipse
+            const vertices = [ellipseData];
+
+            // Create geometry for point cloud
+            const geometry = new THREE.BufferGeometry();
+            
+            // Position
+            const positions = new Float32Array([...ellipseData.position]);
+            geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+            
+            // Scale
+            const scales = new Float32Array([...ellipseData.scale]);
+            geometry.setAttribute('scale', new THREE.BufferAttribute(scales, 3));
+            
+            // Rotation
+            const rotations = new Float32Array([...ellipseData.rotation]);
+            geometry.setAttribute('rotation', new THREE.BufferAttribute(rotations, 4));
+            
+            // Opacity
+            const opacities = new Float32Array([ellipseData.opacity]);
+            geometry.setAttribute('opacity', new THREE.BufferAttribute(opacities, 1));
+            
+            // Color
+            const colors = new Float32Array([...ellipseData.color]);
+            geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+            
+            // Spherical harmonics DC
+            const sh_dc = new Float32Array([...ellipseData.sh_dc]);
+            geometry.setAttribute('sh_dc', new THREE.BufferAttribute(sh_dc, 3));
+            
+            // Spherical harmonics rest coefficients (initialize with zeros)
+            const numCoeffs = 4;
+            for (let i = 0; i < 7; i++) {
+                const shRest = new Float32Array(numCoeffs);
+                shRest.fill(0.0);
+                const attrNames = [
+                    'sh_rest_0_3', 'sh_rest_4_7', 'sh_rest_8_11',
+                    'sh_rest_12_15', 'sh_rest_16_19', 'sh_rest_20_23',
+                    'sh_rest_24_27'
+                ];
+                if (i < attrNames.length) {
+                    geometry.setAttribute(attrNames[i], new THREE.BufferAttribute(shRest, 4));
+                }
+            }
+
+            // Create material using the Gaussian splat loader
+            // const material = loader.createGaussianSplatMaterial(2, 500);
+            const material = loader.createGaussianSplatMaterial_ellipso(2, 1000, 1.0);
+            // Create points mesh
+            const mesh = new THREE.Points(geometry, material);
+            return mesh;
+        }
+
+        // UI Controls
+        let showWireframes = true;
+        let showGaussian = true;
+        let autoRotate = true;
+        let rotationSpeed = 0.005;
+
+        document.getElementById('toggleWireframe').addEventListener('click', () => {
+            showWireframes = !showWireframes;
+            wireframeGroup.visible = showWireframes;
+        });
+
+        document.getElementById('toggleGaussian').addEventListener('click', () => {
+            showGaussian = !showGaussian;
+            gaussianGroup.visible = showGaussian;
+        });
+
+        document.getElementById('resetCamera').addEventListener('click', () => {
+            camera.position.set(0, 5, 15);
+            controls.reset();
+        });
+
+        document.getElementById('harmonicDegree').addEventListener('change', (e) => {
+            const degree = parseInt(e.target.value);
+            updateGaussianMaterials(degree);
+        });
+
+        document.getElementById('pointScale').addEventListener('input', (e) => {
+            const scale = parseFloat(e.target.value);
+            document.getElementById('pointScaleValue').textContent = scale;
+            updateGaussianMaterials(null, scale);
+        });
+
+        document.getElementById('rotationSpeed').addEventListener('input', (e) => {
+            rotationSpeed = parseFloat(e.target.value);
+            document.getElementById('rotationSpeedValue').textContent = rotationSpeed;
+        });
+
+        function updateGaussianMaterials(harmonicDegree = null, pointScale = null) {
+            gaussianGroup.children.forEach(mesh => {
+                if (mesh.material && mesh.material.uniforms) {
+                    if (harmonicDegree !== null && mesh.material.uniforms.harmonicDegree) {
+                        mesh.material.uniforms.harmonicDegree.value = harmonicDegree;
+                    }
+                    if (pointScale !== null && mesh.material.uniforms.pointScale) {
+                        mesh.material.uniforms.pointScale.value = pointScale;
+                    }
+                }
+            });
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            const fov = camera.fov * (Math.PI / 180);
+            const height = window.innerHeight;
+            const focalY = height / (2 * Math.tan(fov / 2));
+            const focalX = focalY; // Asumiendo aspect ratio cuadrado de pixeles
+
+            gaussianGroup.children.forEach(mesh => {
+                if (mesh.material && mesh.material.uniforms && mesh.material.uniforms.focal && mesh.material.uniforms.viewport) {
+                    mesh.material.uniforms.focal.value.set(focalX, focalY);
+                    mesh.material.uniforms.viewport.value.set(window.innerWidth, window.innerHeight);
+                }
+            });
+        }
+
+        // Animation loop
+        function animate() {
+            requestAnimationFrame(animate);
+
+            // Auto rotation
+            if (autoRotate) {
+                wireframeGroup.rotation.y += rotationSpeed;
+                gaussianGroup.rotation.y += rotationSpeed;
+            }
+            // Update camera uniforms for Gaussian splats
+            gaussianGroup.children.forEach(mesh => {
+
+                if (mesh.material && mesh.material.uniforms && mesh.material.uniforms.cameraPosition) {
+                    mesh.material.uniforms.cameraPosition.value.copy(camera.position);
+                }
+
+            });
+
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        // Handle window resize
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+            const fov = camera.fov * (Math.PI / 180);
+            const height = window.innerHeight;
+            const focalY = height / (2 * Math.tan(fov / 2));
+            const focalX = focalY; // Asumiendo aspect ratio cuadrado de pixeles
+
+            gaussianGroup.children.forEach(mesh => {
+                if (mesh.material && mesh.material.uniforms && mesh.material.uniforms.focal && mesh.material.uniforms.viewport) {
+                    mesh.material.uniforms.focal.value.set(focalX, focalY);
+                    mesh.material.uniforms.viewport.value.set(window.innerWidth, window.innerHeight);
+                }
+            });
+        });
+
+        console.log('Test scene created with 100 ellipses');
+        console.log('Wireframes:', showWireframes ? 'visible' : 'hidden');
+        console.log('Gaussian splats:', showGaussian ? 'visible' : 'hidden');
+
+        // Start animation
+        animate();
+    </script>
+</body>
+</html>

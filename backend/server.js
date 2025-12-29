@@ -16,6 +16,11 @@ app.get('/', (req, res) => {
   res.sendFile(path.join(__dirname, '../frontend/index.html'));
 });
 
+// Serve test page
+app.get('/test', (req, res) => {
+  res.sendFile(path.join(__dirname, '../frontend/test-ellipses.html'));
+});
+
 // API endpoint to save images
 app.post('/api/save-image', (req, res) => {
   try {
@@ -53,7 +58,7 @@ wss.on('connection', (ws) => {
         const imageData = msg.data.replace(/^data:image\/png;base64,/, '');
         const filename = `rendered_image_${timestamp}.png`;
         
-        fs.writeFileSync(path.join(__dirname, filename), imageData, 'base64');
+        //fs.writeFileSync(path.join(__dirname, filename), imageData, 'base64');
         console.log(`Saved rendered image: ${filename}`);
       }
     } catch (error) {

@@ -1,6 +1,8 @@
 // controls.js
 // Keyboard and input controls for the simulator
 
+import { updateObjectSorting } from './renderer.js';
+
 export class KeyboardControls {
   constructor(robot, camera, renderer, scene, onMovementCallback = null) {
     this.robot = robot;
@@ -62,6 +64,7 @@ export class KeyboardControls {
     
     if (moved) {
       this.camera.update();
+      updateObjectSorting(this.scene, this.camera.camera);
       this.renderer.render(this.scene, this.camera.camera);
       
       // Call movement callback if provided
