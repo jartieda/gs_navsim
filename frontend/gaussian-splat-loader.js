@@ -200,14 +200,6 @@ export class GaussianSplatLoader {
   }
 
   processVertex(vertex) {
-    // Standard position - rotate 180 degrees around X axis
-    /*const processed = {
-      position: [
-        vertex.x || 0,
-        -(vertex.y || 0), 
-        -(vertex.z || 0)
-      ]
-    };*/
     // inverted
     const processed = {
       position: [
@@ -216,13 +208,7 @@ export class GaussianSplatLoader {
         (vertex.z || 0)
       ]
     };
-    // Gaussian splatting specific attributes - rotate 180 degrees around X axis
-    //processed.scale = [
-    //  vertex.scale_0 || vertex.scale_x || 0.01,
-    //  vertex.scale_2 || vertex.scale_z || 0.01, // Y and Z swapped for X rotation
-    //  vertex.scale_1 || vertex.scale_y || 0.01
-    //];
-    //processed.scale = processed.scale.map(s => Math.exp(s));
+    
     // inverted scale 
     // Aplicamos exp() porque en el PLY están en espacio logarítmico
     processed.scale = [
@@ -238,19 +224,18 @@ export class GaussianSplatLoader {
       vertex.rot_3 || 0, // z
       vertex.rot_0 || 1  // w
     ];
-    
-    // 180 degree rotation around X axis quaternion: (1, 0, 0, 0)
-    // Compose with original quaternion: q_result = q_rotation * q_original
-    /*const qx = 1, qy = 0, qz = 0, qw = 0; // X rotation quaternion
-    const ox = originalQuat[0], oy = originalQuat[1], oz = originalQuat[2], ow = originalQuat[3];
-    
-    processed.rotation = [
-      qw * ox + qx * ow + qy * oz - qz * oy, // x
-      qw * oy - qx * oz + qy * ow + qz * ox, // y
-      qw * oz + qx * oy - qy * ox + qz * ow, // z
-      qw * ow - qx * ox - qy * oy - qz * oz  // w
-    ];*/
-    
+    // quaterinon regularization
+    const norm = Math.sqrt(
+      processed.rotation[0] * processed.rotation[0] +
+      processed.rotation[1] * processed.rotation[1] +
+      processed.rotation[2] * processed.rotation[2] +
+      processed.rotation[3] * processed.rotation[3]
+    );
+    processed.rotation[0] /= norm;
+    processed.rotation[1] /= norm;
+    processed.rotation[2] /= norm;
+    processed.rotation[3] /= norm;
+
     // Opacity
     // 1. Obtener el valor crudo (raw) del objeto vertex
     const rawOpacity = vertex.opacity !== undefined ? vertex.opacity : (vertex.alpha ?? 0);
@@ -505,21 +490,21 @@ export class GaussianSplatLoader {
           // Red: 9, 12, 15, 18, 21
           color.r += 1.0925484305920792 * xy * sh_rest_8_11.y;
           color.r += -1.0925484305920792 * yz * sh_rest_12_15.x;
-          color.r += 0.94617469575755997 * (2.0 * zz - xx - yy) * sh_rest_12_15.w;
+          color.r += 0.31539156525252005 * (2.0 * zz - xx - yy) * sh_rest_12_15.w;
           color.r += -1.0925484305920792 * xz * sh_rest_16_19.z;
           color.r += 0.54627421529603959 * (xx - yy) * sh_rest_20_23.y;
 
           // Green: 10, 13, 16, 19, 22
           color.g += 1.0925484305920792 * xy * sh_rest_8_11.z;
           color.g += -1.0925484305920792 * yz * sh_rest_12_15.y;
-          color.g += 0.94617469575755997 * (2.0 * zz - xx - yy) * sh_rest_16_19.x;
+          color.g += 0.31539156525252005 * (2.0 * zz - xx - yy) * sh_rest_16_19.x;
           color.g += -1.0925484305920792 * xz * sh_rest_16_19.w;
           color.g += 0.54627421529603959 * (xx - yy) * sh_rest_20_23.z;
 
           // Blue: 11, 14, 17, 20, 23
           color.b += 1.0925484305920792 * xy * sh_rest_8_11.w;
           color.b += -1.0925484305920792 * yz * sh_rest_12_15.z;
-          color.b += 0.94617469575755997 * (2.0 * zz - xx - yy) * sh_rest_16_19.y;
+          color.b += 0.31539156525252005 * (2.0 * zz - xx - yy) * sh_rest_16_19.y;
           color.b += -1.0925484305920792 * xz * sh_rest_20_23.x;
           color.b += 0.54627421529603959 * (xx - yy) * sh_rest_20_23.w;
           
@@ -622,22 +607,13 @@ export class GaussianSplatLoader {
           // vCovariance2D = J * Sigma_view * J^T
           vCovariance2D = J * Sigma_view * transpose(J);
 
+          // Standard 3DGS low-pass filter: add a small bias to the diagonal
+          vCovariance2D[0][0] += 0.3;
+          vCovariance2D[1][1] += 0.3;
           
-      
           // 6. Determinar el tamaño del quad 2D
           // El tamaño del quad debe ser proporcional al tamaño de la elipse 2D (ej. 3 sigma)
           // El radio máximo al cuadrado de la elipse 2D es el autovalor más grande de Sigma'.
-          
-          // Usamos el trazo (suma de diagonales) para estimar el tamaño del BB
-          // Mejor aún, se calcula directamente el radio máximo:
-          //float det_cov_2d = vCovariance2D[0][0] * vCovariance2D[1][1] - vCovariance2D[0][1] * vCovariance2D[1][0];
-          //float trace_cov_2d = vCovariance2D[0][0] + vCovariance2D[1][1];
-          //float discriminant = trace_cov_2d * trace_cov_2d - 4.0 * det_cov_2d;
-          //float max_eigenvalue = (trace_cov_2d + sqrt(max(0.0, discriminant))) / 2.0;
-          // Usar 3 veces la desviación estándar (sqrt(autovalor)) para el tamaño del quad
-          //float radius = 3.0 * sqrt(max(0.0001, max_eigenvalue)); // Ensure positive value
-        
-          // 6. Tamaño del punto dinámico
           float det = vCovariance2D[0][0] * vCovariance2D[1][1] - vCovariance2D[0][1] * vCovariance2D[1][0];
           float mid = 0.5 * (vCovariance2D[0][0] + vCovariance2D[1][1]);
           float lambda = mid + sqrt(max(0.1, mid * mid - det));
