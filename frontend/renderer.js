@@ -13,7 +13,7 @@ export function setupScene(canvas) {
   renderer.setPixelRatio(window.devicePixelRatio);
   
   const scene = new THREE.Scene();
-  scene.background = new THREE.Color(0xcccccc); // Light grey background
+  scene.background = new THREE.Color(0x000000); // Black background
   
   const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
   camera.position.set(0, 1, 5);
@@ -130,7 +130,7 @@ function clearExistingRenderObjects(scene) {
   
   // Clear existing object mode meshes (all types)
   const existingObjects = scene.children.filter(child => child.userData && 
-    (child.userData.type === 'object_mode' || child.userData.type === 'ellipse_mode' || child.userData.type === 'object_fuzz_mode'));
+    (child.userData.type === 'object_mode' || child.userData.type === 'ellipse_mode'));
   existingObjects.forEach(obj => scene.remove(obj));
 }
 
@@ -189,7 +189,7 @@ export async function loadPLY(file) {
 }
 function updateSorting(scene, camera) {
     const existingObjects = scene.children.filter(child => child.userData && 
-        (child.userData.type === 'object_mode' || child.userData.type === 'ellipse_mode' || child.userData.type === 'object_fuzz_mode'));
+        (child.userData.type === 'object_mode' || child.userData.type === 'ellipse_mode'));
 
     const cameraPosition = camera.position;
 
@@ -200,7 +200,7 @@ function updateSorting(scene, camera) {
         let numSplats = 0;
 
         if (objectGroup.children && objectGroup.children.length > 0) {
-            // For object_fuzz_mode, get the first layer's InstancedMesh
+            // Get the InstancedMesh from the group
             instancedMesh = objectGroup.children[0];
             if (instancedMesh && instancedMesh.isInstancedMesh) {
                 numSplats = instancedMesh.count;
@@ -340,7 +340,6 @@ function updatePointCloudSorting(scene, camera) {
 export function updateObjectSorting(scene, camera) {
   updateSplatUniforms(camera);
   updateSorting(scene, camera);
-  
   // Also handle point cloud sorting for Gaussian splats
   updatePointCloudSorting(scene, camera);
 }
@@ -567,164 +566,7 @@ function createEllipseTexture() {
   return texture;
 }
 
-export function renderObjectFuzzMode(scene, pointCloud, scale = 100) {
-  // Clear existing render objects
-  clearExistingRenderObjects(scene);
-  
-  const geometry = pointCloud.geometry;
-  const positions = geometry.attributes.position.array;
-  const scales = geometry.attributes.scale ? geometry.attributes.scale.array : null;
-  const rotations = geometry.attributes.rotation ? geometry.attributes.rotation.array : null;
-  const colors = geometry.attributes.color ? geometry.attributes.color.array : null;
-  const opacities = geometry.attributes.opacity ? geometry.attributes.opacity.array : null;
-  const vertexCount = positions.length / 3;
-  
-  // Always use instanced rendering for better performance
-  console.log(`Creating ${vertexCount} instanced fuzz ellipsoids with 3 layers at ${scale}% scale.`);
-  return renderObjectFuzzModeInstanced(scene, positions, scales, rotations, colors, vertexCount, opacities, scale);
-}
 
-function renderObjectFuzzModeInstanced(scene, positions, scales, rotations, colors, vertexCount, opacities, globalScale = 100) {
-  // Create a group to hold the instanced meshes
-  const objectGroup = new THREE.Group();
-  objectGroup.userData = { type: 'object_fuzz_mode' };
-  
-  // Create ellipsoid geometry
-  const ellipsoidGeometry = new THREE.SphereGeometry(1, 12, 8); // Lower resolution for performance
-  //ellipsoidGeometry.setAttribute('instanceOpacity', new THREE.InstancedBufferAttribute(opacities, 1));
-  // Convert percentage to multiplier
-  const scaleMultiplierGlobal = globalScale / 100;
-  
-  // Create multiple layers of instanced meshes for fuzz effect
-  const layers = 3;
-  for (let layer = 0; layer < layers; layer++) {
-    // Create separate geometry for each layer to have independent opacity attributes
-    const layerGeometry = new THREE.SphereGeometry(1, 12, 8);
-    
-    // Add individual opacity attribute for this layer, adjusted by layer opacity
-    if (opacities) {
-      const layerOpacities2 = new Float32Array(vertexCount);      
-      for (let i = 0; i < vertexCount; i++) {
-        // Combine base layer opacity with individual point opacity
-        layerOpacities2[i] = opacities[i] - layer * 0.20; 
-      }
-      layerGeometry.setAttribute('instanceOpacity', new THREE.InstancedBufferAttribute(layerOpacities2, 1));
-    }
-    
-    const material = new THREE.MeshBasicMaterial({
-      transparent: true,
-      opacity: 0.1, // Set to 1.0 since we're handling opacity in the shader
-      fog: false,
-      //blending: THREE.AdditiveBlending, // Común en Gaussian Splatting pero te lo deja todo blanco
-      depthWrite: false 
-    });
-
-    material.onBeforeCompile = (shader) => {
-        // 1. Declarar el atributo en el Vertex Shader
-        shader.vertexShader = `
-            attribute float instanceOpacity;
-            varying float vInstanceOpacity;
-            ${shader.vertexShader}
-        `.replace(
-            '#include <begin_vertex>',
-            `
-            #include <begin_vertex>
-            vInstanceOpacity = instanceOpacity;
-            `
-        );
-
-        // 2. Aplicar la opacidad en el Fragment Shader - usar directamente la opacidad calculada
-        shader.fragmentShader = `
-            varying float vInstanceOpacity;
-            ${shader.fragmentShader}
-        `.replace(
-            '#include <alphamap_fragment>',
-            `
-            #include <alphamap_fragment>
-            diffuseColor.a = vInstanceOpacity; // Use calculated opacity directly, not multiply
-            `
-        );
-    };
-    const instancedMesh = new THREE.InstancedMesh(layerGeometry, material, vertexCount);
-    
-    // Set up instance matrices and colors
-    const matrix = new THREE.Matrix4();
-    const quaternion = new THREE.Quaternion();
-    const position = new THREE.Vector3();
-    const scale = new THREE.Vector3();
-    
-    const scaleMultiplier = 1 + layer * 0.4; // Each layer is 40% larger
-    
-    for (let i = 0; i < vertexCount; i++) {
-      const i3 = i * 3;
-      const i4 = i * 4;
-      
-      // Set position
-      position.set(positions[i3], positions[i3 + 1], positions[i3 + 2]);
-      
-      // Set scale from Gaussian scale parameters with layer multiplier and global scale
-      if (scales) {
-        scale.set(
-          scales[i3] * scaleMultiplier * scaleMultiplierGlobal, 
-          scales[i3 + 1] * scaleMultiplier * scaleMultiplierGlobal, 
-          scales[i3 + 2] * scaleMultiplier * scaleMultiplierGlobal
-        );
-      } else {
-        const defaultScale = (0.1 + layer * 0.02) * scaleMultiplier * scaleMultiplierGlobal;
-        scale.set(defaultScale, defaultScale, defaultScale);
-      }
-      
-      // Set rotation from quaternion
-      if (rotations) {
-        quaternion.set(
-          rotations[i4],     // x
-          rotations[i4 + 1], // y
-          rotations[i4 + 2], // z
-          rotations[i4 + 3]  // w
-        );
-      } else {
-        quaternion.set(0, 0, 0, 1); // Default quaternion
-      }
-      
-      // Compose matrix from position, quaternion, and scale
-      matrix.compose(position, quaternion, scale);
-      instancedMesh.setMatrixAt(i, matrix);
-      
-      // Set color if available
-      if (colors) {
-        const baseColor = new THREE.Color(colors[i3], colors[i3 + 1], colors[i3 + 2]);
-        // Add slight glow effect based on layer
-        const glowColor = baseColor.clone().multiplyScalar(1 + layer * 0.1);
-        instancedMesh.setColorAt(i, glowColor);
-      } else {
-        const glowColor = new THREE.Color(0xff6600).multiplyScalar(1 + layer * 0.1);
-        instancedMesh.setColorAt(i, glowColor);
-      }
-    }
-    
-    // Update instance matrix and colors
-    instancedMesh.instanceMatrix.needsUpdate = true;
-    if (instancedMesh.instanceColor) {
-      instancedMesh.instanceColor.needsUpdate = true;
-    }
-    
-    objectGroup.add(instancedMesh);
-  } // End of layers loop
-  
-  // Add the group to the scene
-  scene.add(objectGroup);
-  
-  // Calculate bounding box for camera positioning
-  const box = new THREE.Box3().setFromObject(objectGroup);
-  const center = box.getCenter(new THREE.Vector3());
-  const size = box.getSize(new THREE.Vector3());
-  
-  // Position camera to view the entire object collection
-  const maxDim = Math.max(size.x, size.y, size.z);
-  const distance = maxDim * 2;
-  
-  return { center, distance };
-}
 
 export function renderObjectMode(scene, pointCloud, scale = 100) {
   // Clear existing render objects

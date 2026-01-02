@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { setupScene, loadPLY, renderGaussianSplatting, renderObjectMode, renderEllipseMode, renderObjectFuzzMode, exportImage, saveImageToServer, updateObjectSorting } from './renderer.js';
+import { setupScene, loadPLY, renderGaussianSplatting, renderObjectMode, renderEllipseMode, exportImage, saveImageToServer, updateObjectSorting } from './renderer.js';
 import { setupSocket } from './socket.js';
 import { RobotController, CameraController, createRobotMarker, createGaussianMaterial } from './utils.js';
 import { KeyboardControls } from './controls.js';
@@ -177,11 +177,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     const scale = parseFloat(pointScale.value);
       
-    if (mode === 'objectFuzz') {
-      // Use object fuzz mode rendering with multi-layer fuzzy ellipsoids
-      console.log('Switching to object fuzz mode');
-      renderObjectFuzzMode(scene, currentPointCloud, scale);
-    } else if (mode === 'ellipseGradient') {
+    if (mode === 'ellipseGradient') {
       console.log('Switching to ellipse gradient mode');
       // Use ellipse mode rendering with gradient ellipses
       renderEllipseMode(scene, currentPointCloud, scale);
@@ -198,8 +194,6 @@ document.addEventListener('DOMContentLoaded', () => {
       const chi = parseFloat(chiScale.value);
       
       if (mode === 'gaussian') {
-        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale);
-      } else if (mode === 'ellipse') {
         currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
       } else {
         currentPointCloud.material = loader.createSimplePointMaterial();
@@ -229,8 +223,6 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // Update the material with the new harmonic degree
       if (currentMode === 'gaussian') {
-        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale);
-      } else if (currentMode === 'ellipse') {
         currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
       }
       
@@ -257,11 +249,8 @@ document.addEventListener('DOMContentLoaded', () => {
       
       // Update the material with the new point scale
       if (currentMode === 'gaussian') {
-        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale);
-      } else if (currentMode === 'ellipse') {
         currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
       }
-      
       // Re-render scene
       updateObjectSorting(scene, camera);
       renderer.render(scene, camera);
@@ -283,7 +272,7 @@ document.addEventListener('DOMContentLoaded', () => {
       const loader = currentPointCloud.userData.loader;
       const currentMode = materialSelector.value;
       
-      if (currentMode === 'ellipse') {
+      if (currentMode === 'gaussian') {
         const degree = parseInt(harmonicDegree.value);
         const scale = parseFloat(pointScale.value);
         

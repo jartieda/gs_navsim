@@ -583,19 +583,6 @@ export class GaussianSplatLoader {
           float x = p_view.x;
           float y = p_view.y;
 
-          //mat3x2 J = mat3x2(
-          //    z_inv, 0.0,        // First column: [1/z, 0]
-          //    0.0, z_inv,        // Second column: [0, 1/z]  
-          //    -x * z_inv_sq, -y * z_inv_sq  // Third column: [-x/z^2, -y/z^2]
-          //);
-          
-          // version con focal positivo
-          //mat3x2 J = mat3x2(
-          //  focal.x * z_inv, 0.0,
-          //  0.0, focal.y * z_inv,
-          //  -(focal.x * mvPosition.x) * z_inv_sq, -(focal.y * mvPosition.y) * z_inv_sq
-          //);
-
           // p_view.x y p_view.y ya están en espacio de cámara (antes de la división de proyección)
           mat3x2 J = mat3x2(
               focal.x * z_inv, 0.0,                          // Columna 1
