@@ -217,7 +217,7 @@ export class GaussianSplatLoader {
         Math.exp(vertex.scale_2 ?? -5)
     ];
 
-    // Rotation (quaternion) - apply 180 degree X rotation
+    // Rotation (quaternion)
     processed.rotation = [
       vertex.rot_1 || 0, // x
       vertex.rot_2 || 0, // y 
@@ -237,7 +237,7 @@ export class GaussianSplatLoader {
     processed.rotation[3] /= norm;
 
     // Opacity
-    // 1. Obtener el valor crudo (raw) del objeto vertex
+    // 1. Obtener el valor crudo (raw) del objeto verte x
     const rawOpacity = vertex.opacity !== undefined ? vertex.opacity : (vertex.alpha ?? 0);
     // 2. Aplicar la sigmoide
     let opacity = 1.0 / (1.0 + Math.exp(-rawOpacity));
@@ -307,15 +307,69 @@ export class GaussianSplatLoader {
     const rotations = new Float32Array(vertices.length * 4);
     const opacities = new Float32Array(vertices.length);
     
-    // Spherical harmonics coefficients (grouped into vec4 attributes)
-    const sh_dc = new Float32Array(vertices.length * 3);          // DC coefficients
-    const sh_rest_0_3 = new Float32Array(vertices.length * 4);    // f_rest_0, f_rest_1, f_rest_2, f_rest_3
-    const sh_rest_4_7 = new Float32Array(vertices.length * 4);    // f_rest_4, f_rest_5, f_rest_6, f_rest_7
-    const sh_rest_8_11 = new Float32Array(vertices.length * 4);   // f_rest_8, f_rest_9, f_rest_10, f_rest_11
-    const sh_rest_12_15 = new Float32Array(vertices.length * 4);  // f_rest_12, f_rest_13, f_rest_14, f_rest_15
-    const sh_rest_16_19 = new Float32Array(vertices.length * 4);  // f_rest_16, f_rest_17, f_rest_18, f_rest_19
-    const sh_rest_20_23 = new Float32Array(vertices.length * 4);  // f_rest_20, f_rest_21, f_rest_22, f_rest_23
-    const sh_rest_24_27 = new Float32Array(vertices.length * 4);  // f_rest_24, f_rest_25, f_rest_26, f_rest_27
+    // Texture coordinates for SH data lookup
+    const texCoords = new Float32Array(vertices.length * 2);
+    
+    // Calculate texture dimensions (power of 2 for better performance)
+    // Ensure texture can fit all vertices
+    const minTextureSize = Math.ceil(Math.sqrt(vertices.length));
+    const textureSize = Math.pow(2, Math.ceil(Math.log2(minTextureSize)));
+    const totalTexels = textureSize * textureSize;
+    
+    console.log(`Texture sizing calculation:`);
+    console.log(`- Vertices: ${vertices.length}`);
+    console.log(`- Min texture size needed: ${minTextureSize}`);
+    console.log(`- Actual texture size: ${textureSize}x${textureSize}`);
+    console.log(`- Total texels: ${totalTexels}`);
+    console.log(`- Vertices fit: ${vertices.length <= totalTexels ? 'YES' : 'NO'}`);
+    
+    if (vertices.length > totalTexels) {
+      throw new Error(`Not enough texels: need ${vertices.length}, have ${totalTexels}`);
+    }
+    
+    // SH DC texture data (RGB format) - initialize all pixels to zero
+    const shDcTextureData = new Float32Array(totalTexels * 4);
+    shDcTextureData.fill(0.0); // Explicitly zero-initialize
+    
+    // SH rest texture data (RGB format, we'll use multiple textures for up to 48 coefficients)
+    const shRestTextureData1 = new Float32Array(totalTexels * 4); // coefficients 0-2
+    const shRestTextureData2 = new Float32Array(totalTexels * 4); // coefficients 3-5
+    const shRestTextureData3 = new Float32Array(totalTexels * 4); // coefficients 6-8
+    const shRestTextureData4 = new Float32Array(totalTexels * 4); // coefficients 9-11 (degree 2)
+    const shRestTextureData5 = new Float32Array(totalTexels * 4); // coefficients 12-14
+    const shRestTextureData6 = new Float32Array(totalTexels * 4); // coefficients 15-17
+    const shRestTextureData7 = new Float32Array(totalTexels * 4); // coefficients 18-20
+    const shRestTextureData8 = new Float32Array(totalTexels * 4); // coefficients 21-23
+    const shRestTextureData9 = new Float32Array(totalTexels * 4); // coefficients 24-26 (degree 3)
+    const shRestTextureData10 = new Float32Array(totalTexels * 4); // coefficients 27-29
+    const shRestTextureData11 = new Float32Array(totalTexels * 4); // coefficients 30-32
+    const shRestTextureData12 = new Float32Array(totalTexels * 4); // coefficients 33-35
+    const shRestTextureData13 = new Float32Array(totalTexels * 4); // coefficients 36-38
+    const shRestTextureData14 = new Float32Array(totalTexels * 4); // coefficients 39-41
+    const shRestTextureData15 = new Float32Array(totalTexels * 4); // coefficients 42-44
+    
+    // Explicitly zero-initialize all texture data
+    shRestTextureData1.fill(0.0);
+    shRestTextureData2.fill(0.0);
+    shRestTextureData3.fill(0.0);
+    shRestTextureData4.fill(0.0);
+    shRestTextureData5.fill(0.0);
+    shRestTextureData6.fill(0.0);
+    shRestTextureData7.fill(0.0);
+    shRestTextureData8.fill(0.0);
+    shRestTextureData9.fill(0.0);
+    shRestTextureData10.fill(0.0);
+    shRestTextureData11.fill(0.0);
+    shRestTextureData12.fill(0.0);
+    shRestTextureData13.fill(0.0);
+    shRestTextureData14.fill(0.0);
+    shRestTextureData15.fill(0.0);
+    
+    console.log(`Texture data arrays created:`);
+    console.log(`- DC: ${shDcTextureData.length} floats (${shDcTextureData.length * 4} bytes)`);
+    console.log(`- Rest1: ${shRestTextureData1.length} floats (${shRestTextureData1.length * 4} bytes)`);
+    console.log(`- Rest2: ${shRestTextureData2.length} floats (${shRestTextureData2.length * 4} bytes)`);
+    console.log(`- Rest3: ${shRestTextureData3.length} floats (${shRestTextureData3.length * 4} bytes)`);
     
     
     for (let i = 0; i < vertices.length; i++) {
@@ -342,46 +396,136 @@ export class GaussianSplatLoader {
       // Opacity
       opacities[i] = vertex.opacity;
       
-      // SH DC coefficients (fundamental color)
-      sh_dc[i3] = vertex.sh_dc[0];
-      sh_dc[i3 + 1] = vertex.sh_dc[1];
-      sh_dc[i3 + 2] = vertex.sh_dc[2];
+      // Calculate texture coordinates for this vertex
+      const texX = i % textureSize;
+      const texY = Math.floor(i / textureSize);
+      const texIndex = texY * textureSize + texX;
       
-      // SH rest coefficients (grouped into vec4 attributes)
-      sh_rest_0_3[i4] = vertex.sh_rest[0] || 0.0;
-      sh_rest_0_3[i4 + 1] = vertex.sh_rest[1] || 0.0;
-      sh_rest_0_3[i4 + 2] = vertex.sh_rest[2] || 0.0;
-      sh_rest_0_3[i4 + 3] = vertex.sh_rest[3] || 0.0;
+      // Comprehensive bounds checking
+      if (texX >= textureSize || texY >= textureSize) {
+        console.error(`Texture coordinates out of bounds: (${texX}, ${texY}) >= ${textureSize}`);
+        throw new Error('Texture coordinates out of bounds');
+      }
       
-      sh_rest_4_7[i4] = vertex.sh_rest[4] || 0.0;
-      sh_rest_4_7[i4 + 1] = vertex.sh_rest[5] || 0.0;
-      sh_rest_4_7[i4 + 2] = vertex.sh_rest[6] || 0.0;
-      sh_rest_4_7[i4 + 3] = vertex.sh_rest[7] || 0.0;
+      if (texIndex >= totalTexels) {
+        console.error(`Texture index out of bounds: ${texIndex} >= ${totalTexels}`);
+        throw new Error('Texture index out of bounds');
+      }
       
-      sh_rest_8_11[i4] = vertex.sh_rest[8] || 0.0;
-      sh_rest_8_11[i4 + 1] = vertex.sh_rest[9] || 0.0;
-      sh_rest_8_11[i4 + 2] = vertex.sh_rest[10] || 0.0;
-      sh_rest_8_11[i4 + 3] = vertex.sh_rest[11] || 0.0;
+      // Calculate array indices
+      const dcBaseIdx = texIndex * 4;
+      const restBaseIdx = texIndex * 4;
       
-      sh_rest_12_15[i4] = vertex.sh_rest[12] || 0.0;
-      sh_rest_12_15[i4 + 1] = vertex.sh_rest[13] || 0.0;
-      sh_rest_12_15[i4 + 2] = vertex.sh_rest[14] || 0.0;
-      sh_rest_12_15[i4 + 3] = vertex.sh_rest[15] || 0.0;
+      // Check array bounds
+      if (dcBaseIdx + 2 >= shDcTextureData.length) {
+        console.error(`DC array index out of bounds: ${dcBaseIdx + 2} >= ${shDcTextureData.length}`);
+        throw new Error('DC array index out of bounds');
+      }
+      
+      if (restBaseIdx + 2 >= shRestTextureData1.length) {
+        console.error(`Rest array index out of bounds: ${restBaseIdx + 2} >= ${shRestTextureData1.length}`);
+        throw new Error('Rest array index out of bounds');
+      }
+      
+      // Store texture coordinates for vertex shader
+      texCoords[i * 2] = (texX + 0.5) / textureSize;     // u coordinate
+      texCoords[i * 2 + 1] = (texY + 0.5) / textureSize;  // v coordinate
+      
+      // Store SH DC coefficients in RGB texture
+      shDcTextureData[dcBaseIdx] = vertex.sh_dc[0];
+      shDcTextureData[dcBaseIdx + 1] = vertex.sh_dc[1];
+      shDcTextureData[dcBaseIdx + 2] = vertex.sh_dc[2];
+      
+      // Store SH rest coefficients in RGB textures (3 coefficients per texture)
+      // Texture 1: coefficients 0-2 (RGB)
+      shRestTextureData1[restBaseIdx] = vertex.sh_rest[0] || 0.0;
+      shRestTextureData1[restBaseIdx + 1] = vertex.sh_rest[15] || 0.0;
+      shRestTextureData1[restBaseIdx + 2] = vertex.sh_rest[30] || 0.0;
+      shRestTextureData1[restBaseIdx + 3] = 0.0; // Padding
+      
+      // Texture 2: coefficients 3-5 (RGB)
+      shRestTextureData2[restBaseIdx] = vertex.sh_rest[1] || 0.0;
+      shRestTextureData2[restBaseIdx + 1] = vertex.sh_rest[16] || 0.0;
+      shRestTextureData2[restBaseIdx + 2] = vertex.sh_rest[31] || 0.0;
+      shRestTextureData2[restBaseIdx + 3] = 0.0; // Padding
+      
+      // Texture 3: coefficients 6-8 (RGB)
+      shRestTextureData3[restBaseIdx] = vertex.sh_rest[2] || 0.0;
+      shRestTextureData3[restBaseIdx + 1] = vertex.sh_rest[17] || 0.0;
+      shRestTextureData3[restBaseIdx + 2] = vertex.sh_rest[32] || 0.0;
+      shRestTextureData3[restBaseIdx + 3] = 0.0; // Padding
 
-      sh_rest_16_19[i4] = vertex.sh_rest[16] || 0.0;
-      sh_rest_16_19[i4 + 1] = vertex.sh_rest[17] || 0.0;
-      sh_rest_16_19[i4 + 2] = vertex.sh_rest[18] || 0.0;
-      sh_rest_16_19[i4 + 3] = vertex.sh_rest[19] || 0.0;
+      // Texture 4: coefficients 9-11 (degree 2, RGB)
+      shRestTextureData4[restBaseIdx] = vertex.sh_rest[3] || 0.0;
+      shRestTextureData4[restBaseIdx + 1] = vertex.sh_rest[18] || 0.0;
+      shRestTextureData4[restBaseIdx + 2] = vertex.sh_rest[33] || 0.0;
+      shRestTextureData4[restBaseIdx + 3] = 0.0; // Padding
 
-      sh_rest_20_23[i4] = vertex.sh_rest[20] || 0.0;
-      sh_rest_20_23[i4 + 1] = vertex.sh_rest[21] || 0.0;
-      sh_rest_20_23[i4 + 2] = vertex.sh_rest[22] || 0.0;
-      sh_rest_20_23[i4 + 3] = vertex.sh_rest[23] || 0.0;
+      // Texture 5: coefficients 12-14 (degree 2, RGB)
+      shRestTextureData5[restBaseIdx] = vertex.sh_rest[4] || 0.0;
+      shRestTextureData5[restBaseIdx + 1] = vertex.sh_rest[19] || 0.0;
+      shRestTextureData5[restBaseIdx + 2] = vertex.sh_rest[34] || 0.0;
+      shRestTextureData5[restBaseIdx + 3] = 0.0; // Padding
 
-      sh_rest_24_27[i4] = vertex.sh_rest[24] || 0.0;
-      sh_rest_24_27[i4 + 1] = vertex.sh_rest[25] || 0.0;
-      sh_rest_24_27[i4 + 2] = vertex.sh_rest[26] || 0.0;
-      sh_rest_24_27[i4 + 3] = vertex.sh_rest[27] || 0.0;
+      // Texture 6: coefficients 15-17 (degree 2, RGB)
+      shRestTextureData6[restBaseIdx] = vertex.sh_rest[5] || 0.0;
+      shRestTextureData6[restBaseIdx + 1] = vertex.sh_rest[20] || 0.0;
+      shRestTextureData6[restBaseIdx + 2] = vertex.sh_rest[35] || 0.0;
+      shRestTextureData6[restBaseIdx + 3] = 0.0; // Padding
+
+      // Texture 7: coefficients 18-20 (degree 2, RGB)
+      shRestTextureData7[restBaseIdx] = vertex.sh_rest[6] || 0.0;
+      shRestTextureData7[restBaseIdx + 1] = vertex.sh_rest[21] || 0.0;
+      shRestTextureData7[restBaseIdx + 2] = vertex.sh_rest[36] || 0.0;
+      shRestTextureData7[restBaseIdx + 3] = 0.0; // Padding
+
+      // Texture 8: coefficients 21-23 (degree 2, RGB)
+      shRestTextureData8[restBaseIdx] = vertex.sh_rest[7] || 0.0;
+      shRestTextureData8[restBaseIdx + 1] = vertex.sh_rest[22] || 0.0;
+      shRestTextureData8[restBaseIdx + 2] = vertex.sh_rest[37] || 0.0;
+      shRestTextureData8[restBaseIdx + 3] = 0.0; // Padding
+
+      // Texture 9: coefficients 24-26 (degree 3, RGB)
+      shRestTextureData9[restBaseIdx] = vertex.sh_rest[8] || 0.0;
+      shRestTextureData9[restBaseIdx + 1] = vertex.sh_rest[23] || 0.0;
+      shRestTextureData9[restBaseIdx + 2] = vertex.sh_rest[38] || 0.0;
+      shRestTextureData9[restBaseIdx + 3] = 0.0; // Padding
+
+      // Texture 10: coefficients 27-29 (degree 3, RGB)
+      shRestTextureData10[restBaseIdx] = vertex.sh_rest[9] || 0.0;
+      shRestTextureData10[restBaseIdx + 1] = vertex.sh_rest[24] || 0.0;
+      shRestTextureData10[restBaseIdx + 2] = vertex.sh_rest[39] || 0.0;
+      shRestTextureData10[restBaseIdx + 3] = 0.0; // Padding
+
+      // Texture 11: coefficients 30-32 (degree 3, RGB)
+      shRestTextureData11[restBaseIdx] = vertex.sh_rest[10] || 0.0;
+      shRestTextureData11[restBaseIdx + 1] = vertex.sh_rest[25] || 0.0;
+      shRestTextureData11[restBaseIdx + 2] = vertex.sh_rest[40] || 0.0;
+      shRestTextureData11[restBaseIdx + 3] = 0.0; // Padding
+
+      // Texture 12: coefficients 33-35 (degree 3, RGB)
+      shRestTextureData12[restBaseIdx] = vertex.sh_rest[11] || 0.0;
+      shRestTextureData12[restBaseIdx + 1] = vertex.sh_rest[26] || 0.0;
+      shRestTextureData12[restBaseIdx + 2] = vertex.sh_rest[41] || 0.0;
+      shRestTextureData12[restBaseIdx + 3] = 0.0; // Padding
+
+      // Texture 13: coefficients 36-38 (degree 3, RGB)
+      shRestTextureData13[restBaseIdx] = vertex.sh_rest[12] || 0.0;
+      shRestTextureData13[restBaseIdx + 1] = vertex.sh_rest[27] || 0.0;
+      shRestTextureData13[restBaseIdx + 2] = vertex.sh_rest[42] || 0.0;
+      shRestTextureData13[restBaseIdx + 3] = 0.0; // Padding
+
+      // Texture 14: coefficients 39-41 (degree 3, RGB)
+      shRestTextureData14[restBaseIdx] = vertex.sh_rest[13] || 0.0;
+      shRestTextureData14[restBaseIdx + 1] = vertex.sh_rest[28] || 0.0;
+      shRestTextureData14[restBaseIdx + 2] = vertex.sh_rest[43] || 0.0;
+      shRestTextureData14[restBaseIdx + 3] = 0.0; // Padding
+
+      // Texture 15: coefficients 42-44 (degree 3, RGB)
+      shRestTextureData15[restBaseIdx] = vertex.sh_rest[14] || 0.0;
+      shRestTextureData15[restBaseIdx + 1] = vertex.sh_rest[29] || 0.0;
+      shRestTextureData15[restBaseIdx + 2] = vertex.sh_rest[44] || 0.0;
+      shRestTextureData15[restBaseIdx + 3] = 0.0; // Padding
     }
     
     // Calculate rgbcolor from sh_dc coefficients (convert SH DC to RGB in [0,1] range)
@@ -397,16 +541,333 @@ export class GaussianSplatLoader {
     geometry.setAttribute('scale', new THREE.BufferAttribute(scales, 3));
     geometry.setAttribute('rotation', new THREE.BufferAttribute(rotations, 4));
     geometry.setAttribute('opacity', new THREE.BufferAttribute(opacities, 1));
-    geometry.setAttribute('sh_dc', new THREE.BufferAttribute(sh_dc, 3));
-    geometry.setAttribute('sh_rest_0_3', new THREE.BufferAttribute(sh_rest_0_3, 4));
-    geometry.setAttribute('sh_rest_4_7', new THREE.BufferAttribute(sh_rest_4_7, 4));
-    geometry.setAttribute('sh_rest_8_11', new THREE.BufferAttribute(sh_rest_8_11, 4));
-    geometry.setAttribute('sh_rest_12_15', new THREE.BufferAttribute(sh_rest_12_15, 4));
-    geometry.setAttribute('sh_rest_16_19', new THREE.BufferAttribute(sh_rest_16_19, 4));
-    geometry.setAttribute('sh_rest_20_23', new THREE.BufferAttribute(sh_rest_20_23, 4));
-    geometry.setAttribute('sh_rest_24_27', new THREE.BufferAttribute(sh_rest_24_27, 4));
+    // Set texture coordinates attribute
+    geometry.setAttribute('shTexCoord', new THREE.BufferAttribute(texCoords, 2));
+    
+    // Validate texture data sizes before creating textures
+    const expectedDcSize = totalTexels * 4;
+    const expectedRestSize = totalTexels * 4; // RGBA format
+    
+    console.log(`Texture validation:`);
+    console.log(`- Texture size: ${textureSize}x${textureSize} = ${totalTexels} texels`);
+    console.log(`- Vertices: ${vertices.length}`);
+    console.log(`- DC array: ${shDcTextureData.length} (expected: ${expectedDcSize})`);
+    console.log(`- Rest1 array: ${shRestTextureData1.length} (expected: ${expectedRestSize})`);
+    console.log(`- Rest2 array: ${shRestTextureData2.length} (expected: ${expectedRestSize})`);
+    console.log(`- Rest3 array: ${shRestTextureData3.length} (expected: ${expectedRestSize})`);
+    console.log(`- Rest4-15 arrays: ${shRestTextureData4.length} each (expected: ${expectedRestSize})`);
+    
+    // Ensure arrays are exactly the right size
+    if (shDcTextureData.length !== expectedDcSize) {
+      console.error(`DC texture data size mismatch: ${shDcTextureData.length} !== ${expectedDcSize}`);
+      throw new Error('DC texture data size mismatch');
+    }
+    
+    if (shRestTextureData1.length !== expectedRestSize || 
+        shRestTextureData2.length !== expectedRestSize || 
+        shRestTextureData3.length !== expectedRestSize ||
+        shRestTextureData4.length !== expectedRestSize ||
+        shRestTextureData5.length !== expectedRestSize ||
+        shRestTextureData6.length !== expectedRestSize ||
+        shRestTextureData7.length !== expectedRestSize ||
+        shRestTextureData8.length !== expectedRestSize ||
+        shRestTextureData9.length !== expectedRestSize ||
+        shRestTextureData10.length !== expectedRestSize ||
+        shRestTextureData11.length !== expectedRestSize ||
+        shRestTextureData12.length !== expectedRestSize ||
+        shRestTextureData13.length !== expectedRestSize ||
+        shRestTextureData14.length !== expectedRestSize ||
+        shRestTextureData15.length !== expectedRestSize) {
+      console.error(`Rest texture data size mismatch`);
+      throw new Error('Rest texture data size mismatch');
+    }
+    
+    // Create SH textures with comprehensive validation
+    let shDcTexture, shRestTexture1, shRestTexture2, shRestTexture3, shRestTexture4, shRestTexture5, shRestTexture6, shRestTexture7, shRestTexture8, shRestTexture9, shRestTexture10, shRestTexture11, shRestTexture12, shRestTexture13, shRestTexture14, shRestTexture15;
+    
+    try {
+      // Check WebGL float texture support
+      const canvas = document.createElement('canvas');
+      const gl = canvas.getContext('webgl2') || canvas.getContext('webgl');
+      
+      if (!gl) {
+        throw new Error('WebGL not supported');
+      }
+      
+      const floatExtension = gl.getExtension('OES_texture_float') || gl.getExtension('EXT_color_buffer_float');
+      console.log('Float texture support:', !!floatExtension);
+      
+      // Create textures with extra validation
+      console.log('Creating DC texture with dimensions:', textureSize, 'x', textureSize, 'format: RGB, type: Float');
+      
+      // DC texture (RGB) - create with explicit image object
+      const dcCanvas = document.createElement('canvas');
+      dcCanvas.width = textureSize;
+      dcCanvas.height = textureSize;
+      
+      shDcTexture = new THREE.DataTexture(shDcTextureData, textureSize, textureSize, THREE.RGBFormat, THREE.FloatType);
+      shDcTexture.needsUpdate = true;
+      shDcTexture.minFilter = THREE.NearestFilter;
+      shDcTexture.magFilter = THREE.NearestFilter;
+      shDcTexture.wrapS = THREE.ClampToEdgeWrapping;
+      shDcTexture.wrapT = THREE.ClampToEdgeWrapping;
+      shDcTexture.flipY = false;
+      shDcTexture.generateMipmaps = false;
+      shDcTexture.unpackAlignment = 1; // Prevent alignment issues
+      
+      // Force immediate texture binding to prevent later issues
+      shDcTexture.version = 1;
+      shDcTexture.isDataTexture = true;
+      
+      // Validate texture properties
+      console.log('DC texture properties:');
+      console.log('- Width:', shDcTexture.image.width);
+      console.log('- Height:', shDcTexture.image.height);
+      console.log('- Data length:', shDcTexture.image.data.length);
+      console.log('- Expected data length:', textureSize * textureSize * 3);
+      
+      // Force immediate upload to prevent repeated uploads
+      shDcTexture.needsUpdate = true;
+      console.log('DC texture created successfully - Size:', textureSize, 'x', textureSize, 'Data length:', shDcTextureData.length);
+      
+      // Rest texture 1 (RGB)
+      shRestTexture1 = new THREE.DataTexture(shRestTextureData1, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture1.needsUpdate = true;
+      shRestTexture1.minFilter = THREE.NearestFilter;
+      shRestTexture1.magFilter = THREE.NearestFilter;
+      shRestTexture1.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture1.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture1.flipY = false;
+      shRestTexture1.generateMipmaps = false;
+      shRestTexture1.unpackAlignment = 1;
+      shRestTexture1.version = 1;
+      shRestTexture1.isDataTexture = true;
+      console.log('Rest texture 1 created successfully - Data length:', shRestTextureData1.length);
+      
+      // Rest texture 2 (RGB)
+      shRestTexture2 = new THREE.DataTexture(shRestTextureData2, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture2.needsUpdate = true;
+      shRestTexture2.minFilter = THREE.NearestFilter;
+      shRestTexture2.magFilter = THREE.NearestFilter;
+      shRestTexture2.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture2.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture2.flipY = false;
+      shRestTexture2.generateMipmaps = false;
+      shRestTexture2.unpackAlignment = 1;
+      shRestTexture2.version = 1;
+      shRestTexture2.isDataTexture = true;
+      console.log('Rest texture 2 created successfully - Data length:', shRestTextureData2.length);
+      
+      // Rest texture 3 (RGB)
+      shRestTexture3 = new THREE.DataTexture(shRestTextureData3, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture3.needsUpdate = true;
+      shRestTexture3.minFilter = THREE.NearestFilter;
+      shRestTexture3.magFilter = THREE.NearestFilter;
+      shRestTexture3.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture3.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture3.flipY = false;
+      shRestTexture3.generateMipmaps = false;
+      shRestTexture3.unpackAlignment = 1;
+      shRestTexture3.version = 1;
+      shRestTexture3.isDataTexture = true;
+      console.log('Rest texture 3 created successfully - Data length:', shRestTextureData3.length);
+      
+      // Rest texture 4 (degree 2)
+      shRestTexture4 = new THREE.DataTexture(shRestTextureData4, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture4.needsUpdate = true;
+      shRestTexture4.minFilter = THREE.NearestFilter;
+      shRestTexture4.magFilter = THREE.NearestFilter;
+      shRestTexture4.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture4.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture4.flipY = false;
+      shRestTexture4.generateMipmaps = false;
+      shRestTexture4.unpackAlignment = 1;
+      shRestTexture4.version = 1;
+      shRestTexture4.isDataTexture = true;
+      console.log('Rest texture 4 created successfully - Data length:', shRestTextureData4.length);
+      
+      // Rest texture 5 (degree 2)
+      shRestTexture5 = new THREE.DataTexture(shRestTextureData5, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture5.needsUpdate = true;
+      shRestTexture5.minFilter = THREE.NearestFilter;
+      shRestTexture5.magFilter = THREE.NearestFilter;
+      shRestTexture5.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture5.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture5.flipY = false;
+      shRestTexture5.generateMipmaps = false;
+      shRestTexture5.unpackAlignment = 1;
+      shRestTexture5.version = 1;
+      shRestTexture5.isDataTexture = true;
+      console.log('Rest texture 5 created successfully - Data length:', shRestTextureData5.length);
+      
+      // Rest texture 6 (degree 2)
+      shRestTexture6 = new THREE.DataTexture(shRestTextureData6, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture6.needsUpdate = true;
+      shRestTexture6.minFilter = THREE.NearestFilter;
+      shRestTexture6.magFilter = THREE.NearestFilter;
+      shRestTexture6.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture6.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture6.flipY = false;
+      shRestTexture6.generateMipmaps = false;
+      shRestTexture6.unpackAlignment = 1;
+      shRestTexture6.version = 1;
+      shRestTexture6.isDataTexture = true;
+      console.log('Rest texture 6 created successfully - Data length:', shRestTextureData6.length);
+      
+      // Rest texture 7 (degree 2)
+      shRestTexture7 = new THREE.DataTexture(shRestTextureData7, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture7.needsUpdate = true;
+      shRestTexture7.minFilter = THREE.NearestFilter;
+      shRestTexture7.magFilter = THREE.NearestFilter;
+      shRestTexture7.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture7.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture7.flipY = false;
+      shRestTexture7.generateMipmaps = false;
+      shRestTexture7.unpackAlignment = 1;
+      shRestTexture7.version = 1;
+      shRestTexture7.isDataTexture = true;
+      console.log('Rest texture 7 created successfully - Data length:', shRestTextureData7.length);
+      
+      // Rest texture 8 (degree 2)
+      shRestTexture8 = new THREE.DataTexture(shRestTextureData8, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture8.needsUpdate = true;
+      shRestTexture8.minFilter = THREE.NearestFilter;
+      shRestTexture8.magFilter = THREE.NearestFilter;
+      shRestTexture8.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture8.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture8.flipY = false;
+      shRestTexture8.generateMipmaps = false;
+      shRestTexture8.unpackAlignment = 1;
+      shRestTexture8.version = 1;
+      shRestTexture8.isDataTexture = true;
+      console.log('Rest texture 8 created successfully - Data length:', shRestTextureData8.length);
+      
+      // Rest texture 9 (degree 3)
+      shRestTexture9 = new THREE.DataTexture(shRestTextureData9, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture9.needsUpdate = true;
+      shRestTexture9.minFilter = THREE.NearestFilter;
+      shRestTexture9.magFilter = THREE.NearestFilter;
+      shRestTexture9.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture9.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture9.flipY = false;
+      shRestTexture9.generateMipmaps = false;
+      shRestTexture9.unpackAlignment = 1;
+      shRestTexture9.version = 1;
+      shRestTexture9.isDataTexture = true;
+      console.log('Rest texture 9 created successfully - Data length:', shRestTextureData9.length);
+      
+      // Rest texture 10 (degree 3)
+      shRestTexture10 = new THREE.DataTexture(shRestTextureData10, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture10.needsUpdate = true;
+      shRestTexture10.minFilter = THREE.NearestFilter;
+      shRestTexture10.magFilter = THREE.NearestFilter;
+      shRestTexture10.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture10.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture10.flipY = false;
+      shRestTexture10.generateMipmaps = false;
+      shRestTexture10.unpackAlignment = 1;
+      shRestTexture10.version = 1;
+      shRestTexture10.isDataTexture = true;
+      console.log('Rest texture 10 created successfully - Data length:', shRestTextureData10.length);
+      
+      // Rest texture 11 (degree 3)
+      shRestTexture11 = new THREE.DataTexture(shRestTextureData11, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture11.needsUpdate = true;
+      shRestTexture11.minFilter = THREE.NearestFilter;
+      shRestTexture11.magFilter = THREE.NearestFilter;
+      shRestTexture11.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture11.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture11.flipY = false;
+      shRestTexture11.generateMipmaps = false;
+      shRestTexture11.unpackAlignment = 1;
+      shRestTexture11.version = 1;
+      shRestTexture11.isDataTexture = true;
+      console.log('Rest texture 11 created successfully - Data length:', shRestTextureData11.length);
+      
+      // Rest texture 12 (degree 3)
+      shRestTexture12 = new THREE.DataTexture(shRestTextureData12, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture12.needsUpdate = true;
+      shRestTexture12.minFilter = THREE.NearestFilter;
+      shRestTexture12.magFilter = THREE.NearestFilter;
+      shRestTexture12.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture12.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture12.flipY = false;
+      shRestTexture12.generateMipmaps = false;
+      shRestTexture12.unpackAlignment = 1;
+      shRestTexture12.version = 1;
+      shRestTexture12.isDataTexture = true;
+      console.log('Rest texture 12 created successfully - Data length:', shRestTextureData12.length);
+      
+      // Rest texture 13 (degree 3)
+      shRestTexture13 = new THREE.DataTexture(shRestTextureData13, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture13.needsUpdate = true;
+      shRestTexture13.minFilter = THREE.NearestFilter;
+      shRestTexture13.magFilter = THREE.NearestFilter;
+      shRestTexture13.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture13.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture13.flipY = false;
+      shRestTexture13.generateMipmaps = false;
+      shRestTexture13.unpackAlignment = 1;
+      shRestTexture13.version = 1;
+      shRestTexture13.isDataTexture = true;
+      console.log('Rest texture 13 created successfully - Data length:', shRestTextureData13.length);
+      
+      // Rest texture 14 (degree 3)
+      shRestTexture14 = new THREE.DataTexture(shRestTextureData14, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture14.needsUpdate = true;
+      shRestTexture14.minFilter = THREE.NearestFilter;
+      shRestTexture14.magFilter = THREE.NearestFilter;
+      shRestTexture14.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture14.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture14.flipY = false;
+      shRestTexture14.generateMipmaps = false;
+      shRestTexture14.unpackAlignment = 1;
+      shRestTexture14.version = 1;
+      shRestTexture14.isDataTexture = true;
+      console.log('Rest texture 14 created successfully - Data length:', shRestTextureData14.length);
+      
+      // Rest texture 15 (degree 3)
+      shRestTexture15 = new THREE.DataTexture(shRestTextureData15, textureSize, textureSize, THREE.RGBAFormat, THREE.FloatType);
+      shRestTexture15.needsUpdate = true;
+      shRestTexture15.minFilter = THREE.NearestFilter;
+      shRestTexture15.magFilter = THREE.NearestFilter;
+      shRestTexture15.wrapS = THREE.ClampToEdgeWrapping;
+      shRestTexture15.wrapT = THREE.ClampToEdgeWrapping;
+      shRestTexture15.flipY = false;
+      shRestTexture15.generateMipmaps = false;
+      shRestTexture15.unpackAlignment = 1;
+      shRestTexture15.version = 1;
+      shRestTexture15.isDataTexture = true;
+      console.log('Rest texture 15 created successfully - Data length:', shRestTextureData15.length);
+      
+      console.log('All textures created successfully (15 rest textures + 1 DC texture)');
+      
+    } catch (error) {
+      console.error('Failed to create SH textures:', error);
+      throw error;
+    }
+    
+    // Store textures for material creation
+    this.shTextures = {
+      shDcTexture,
+      shRestTexture1,
+      shRestTexture2,
+      shRestTexture3,
+      shRestTexture4,
+      shRestTexture5,
+      shRestTexture6,
+      shRestTexture7,
+      shRestTexture8,
+      shRestTexture9,
+      shRestTexture10,
+      shRestTexture11,
+      shRestTexture12,
+      shRestTexture13,
+      shRestTexture14,
+      shRestTexture15
+    };
     geometry.scale(1, 1, 1);
-    // Create custom material for Gaussian splatting
+    // Create custom material for Gaussian splatting with textures
     this.material = this.createGaussianSplatMaterial_ellipso();
     const material = this.material;
     
@@ -422,7 +883,31 @@ export class GaussianSplatLoader {
     return mesh;
   }
     
-  createGaussianSplatMaterial_ellipso(harmonicDegree = 2, pointScale = 1000, chiScale = 1.0) {
+  createGaussianSplatMaterial_ellipso(harmonicDegree = 3, pointScale = 1000, chiScale = 1.0) {
+    // Check if textures exist and are valid
+    if (!this.shTextures || !this.shTextures.shDcTexture) {
+      console.warn('SH textures not available, creating fallback material');
+      return this.createSimplePointMaterial();
+    }
+    
+    console.log('Creating material with textures:', {
+      shDcTexture: !!this.shTextures.shDcTexture,
+      shRestTexture1: !!this.shTextures.shRestTexture1,
+      shRestTexture2: !!this.shTextures.shRestTexture2,
+      shRestTexture3: !!this.shTextures.shRestTexture3,
+      shRestTexture4: !!this.shTextures.shRestTexture4,
+      shRestTexture5: !!this.shTextures.shRestTexture5,
+      shRestTexture6: !!this.shTextures.shRestTexture6,
+      shRestTexture7: !!this.shTextures.shRestTexture7,
+      shRestTexture8: !!this.shTextures.shRestTexture8,
+      shRestTexture9: !!this.shTextures.shRestTexture9,
+      shRestTexture10: !!this.shTextures.shRestTexture10,
+      shRestTexture11: !!this.shTextures.shRestTexture11,
+      shRestTexture12: !!this.shTextures.shRestTexture12,
+      shRestTexture13: !!this.shTextures.shRestTexture13,
+      shRestTexture14: !!this.shTextures.shRestTexture14,
+      shRestTexture15: !!this.shTextures.shRestTexture15
+    });
     // Custom shader material for Gaussian splatting with spherical harmonics
     const vertexShader = `
       uniform int harmonicDegree;
@@ -430,19 +915,28 @@ export class GaussianSplatLoader {
       uniform vec2 focal;
       uniform vec2 viewport;
       
+      // SH coefficient textures
+      uniform sampler2D shDcTexture;
+      uniform sampler2D shRestTexture1;
+      uniform sampler2D shRestTexture2;
+      uniform sampler2D shRestTexture3;
+      uniform sampler2D shRestTexture4;
+      uniform sampler2D shRestTexture5;
+      uniform sampler2D shRestTexture6;
+      uniform sampler2D shRestTexture7;
+      uniform sampler2D shRestTexture8;
+      uniform sampler2D shRestTexture9;
+      uniform sampler2D shRestTexture10;
+      uniform sampler2D shRestTexture11;
+      uniform sampler2D shRestTexture12;
+      uniform sampler2D shRestTexture13;
+      uniform sampler2D shRestTexture14;
+      uniform sampler2D shRestTexture15;
+      
       attribute vec3 scale;
       attribute vec4 rotation;
       attribute float opacity;
-      attribute vec3 sh_dc;
-
-      // Pass SH rest coefficients as individual attributes (first 15 for degree 1 & 2)
-      attribute vec4 sh_rest_0_3;   // f_rest_0, f_rest_1, f_rest_2, f_rest_3
-      attribute vec4 sh_rest_4_7;   // f_rest_4, f_rest_5, f_rest_6, f_rest_7
-      attribute vec4 sh_rest_8_11;  // f_rest_8, f_rest_9, f_rest_10, f_rest_11
-      attribute vec4 sh_rest_12_15; // f_rest_12, f_rest_13, f_rest_14, f_rest_15
-      attribute vec4 sh_rest_16_19; // f_rest_16, f_rest_17, f_rest_18, f_rest_19
-      attribute vec4 sh_rest_20_23; // f_rest_20, f_rest_21, f_rest_22, f_rest_23
-      attribute vec4 sh_rest_24_27; // f_rest_24, f_rest_25, f_rest_26, f_rest_27
+      attribute vec2 shTexCoord;
 
       varying vec3 vColor;
       varying float vOpacity;
@@ -453,64 +947,71 @@ export class GaussianSplatLoader {
       varying float vDistance;
       varying mat2 vCovariance2D;
       varying mat4 vCovariance4D;
-
-      // Spherical harmonics evaluation (conditional based on degree)
-      vec3 evaluateSphericalHarmonics(vec3 dir, vec3 sh_dc, int degree) {
-          // Start with DC component (degree 0)
+      vec3 evaluateSphericalHarmonics(vec3 dir, vec2 texCoord, int degree) {
+          // Grado 0 (DC) - lookup from texture
+          vec3 sh_dc = texture2D(shDcTexture, texCoord).rgb;
           vec3 color = 0.5 + 0.28209479177387814 * sh_dc;
-          
-          if (degree < 1) return clamp(color, 0.0, 1.0);
-          
-          // Degree 1 (3 coefficients per color channel = 9 total)
-          // Red: 0, 3, 6
-          color.r += -0.48860251190291987 * dir.y * sh_rest_0_3.x;
-          color.r += 0.48860251190291987 * dir.z * sh_rest_0_3.w;
-          color.r += -0.48860251190291987 * dir.x * sh_rest_4_7.z;
-          
-          // Green: 1, 4, 7
-          color.g += -0.48860251190291987 * dir.y * sh_rest_0_3.y;
-          color.g += 0.48860251190291987 * dir.z * sh_rest_4_7.x;
-          color.g += -0.48860251190291987 * dir.x * sh_rest_4_7.w;
+          if (degree < 1) return max(vec3(0.0), color);
 
-          // Blue: 2, 5, 8
-          color.b += -0.48860251190291987 * dir.y * sh_rest_0_3.z;
-          color.b += 0.48860251190291987 * dir.z * sh_rest_4_7.y;
-          color.b += -0.48860251190291987 * dir.x * sh_rest_8_11.x;
-          
-          if (degree < 2) return clamp(color, 0.0, 1.0);
-          
-          // Degree 2 (5 coefficients per channel = 15 total)
-          float xx = dir.x * dir.x;
-          float yy = dir.y * dir.y;
-          float zz = dir.z * dir.z;
-          float xy = dir.x * dir.y;
-          float yz = dir.y * dir.z;
-          float xz = dir.x * dir.z;
-          
-          // Red: 9, 12, 15, 18, 21
-          color.r += 1.0925484305920792 * xy * sh_rest_8_11.y;
-          color.r += -1.0925484305920792 * yz * sh_rest_12_15.x;
-          color.r += 0.31539156525252005 * (2.0 * zz - xx - yy) * sh_rest_12_15.w;
-          color.r += -1.0925484305920792 * xz * sh_rest_16_19.z;
-          color.r += 0.54627421529603959 * (xx - yy) * sh_rest_20_23.y;
+          float x = dir.x;
+          float y = dir.y;
+          float z = dir.z;
 
-          // Green: 10, 13, 16, 19, 22
-          color.g += 1.0925484305920792 * xy * sh_rest_8_11.z;
-          color.g += -1.0925484305920792 * yz * sh_rest_12_15.y;
-          color.g += 0.31539156525252005 * (2.0 * zz - xx - yy) * sh_rest_16_19.x;
-          color.g += -1.0925484305920792 * xz * sh_rest_16_19.w;
-          color.g += 0.54627421529603959 * (xx - yy) * sh_rest_20_23.z;
+          // Lookup SH rest coefficients from RGB textures (Degree 1)
+          vec3 sh_rest_0_2 = texture2D(shRestTexture1, texCoord).rgb;  // coefficients 0-2
+          vec3 sh_rest_3_5 = texture2D(shRestTexture2, texCoord).rgb;  // coefficients 3-5
+          vec3 sh_rest_6_8 = texture2D(shRestTexture3, texCoord).rgb;  // coefficients 6-8
 
-          // Blue: 11, 14, 17, 20, 23
-          color.b += 1.0925484305920792 * xy * sh_rest_8_11.w;
-          color.b += -1.0925484305920792 * yz * sh_rest_12_15.z;
-          color.b += 0.31539156525252005 * (2.0 * zz - xx - yy) * sh_rest_16_19.y;
-          color.b += -1.0925484305920792 * xz * sh_rest_20_23.x;
-          color.b += 0.54627421529603959 * (xx - yy) * sh_rest_20_23.w;
-          
-          // Clamp color to [0,1] range to avoid overly bright colors
-          //color = clamp(color, 0.0, 1.0);
-          return color;
+          // Grado 1 - Signos corregidos según implementación Inria
+          color += -0.4886025 * y * sh_rest_0_2;  // -Y
+          color +=  0.4886025 * z * sh_rest_3_5;  // +Z
+          color += -0.4886025 * x * sh_rest_6_8;  // -X
+
+          if (degree < 2) return max(vec3(0.0), color);
+
+          // Degree 2 - Additional texture lookups
+          vec3 sh_rest_9_11 = texture2D(shRestTexture4, texCoord).rgb;
+          vec3 sh_rest_12_14 = texture2D(shRestTexture5, texCoord).rgb;
+          vec3 sh_rest_15_17 = texture2D(shRestTexture6, texCoord).rgb;
+          vec3 sh_rest_18_20 = texture2D(shRestTexture7, texCoord).rgb;
+          vec3 sh_rest_21_23 = texture2D(shRestTexture8, texCoord).rgb;
+
+          // Grado 2 - 5 basis functions
+          float xx = x * x, yy = y * y, zz = z * z;
+          float xy = x * y, yz = y * z, xz = x * z;
+
+          color += 1.092548 * xy * sh_rest_9_11;                                    // XY
+          color += -1.092548 * yz * sh_rest_12_14;                                  // YZ
+          color += 0.315391 * (2.0 * zz - xx - yy) * sh_rest_15_17;               // 2Z²-X²-Y²
+          color += -1.092548 * xz * sh_rest_18_20;                                 // XZ
+          color += 0.546274 * (xx - yy) * sh_rest_21_23;                          // X²-Y²
+
+          if (degree < 3) return max(vec3(0.0), color);
+
+          // Degree 3 - Additional texture lookups
+          vec3 sh_rest_24_26 = texture2D(shRestTexture9, texCoord).rgb;
+          vec3 sh_rest_27_29 = texture2D(shRestTexture10, texCoord).rgb;
+          vec3 sh_rest_30_32 = texture2D(shRestTexture11, texCoord).rgb;
+          vec3 sh_rest_33_35 = texture2D(shRestTexture12, texCoord).rgb;
+          vec3 sh_rest_36_38 = texture2D(shRestTexture13, texCoord).rgb;
+          vec3 sh_rest_39_41 = texture2D(shRestTexture14, texCoord).rgb;
+          vec3 sh_rest_42_44 = texture2D(shRestTexture15, texCoord).rgb;
+
+          // Grado 3 - 7 basis functions  
+          float xxx = xx * x, yyy = yy * y, zzz = zz * z;
+          float xxy = xx * y, xxz = xx * z, xyy = x * yy;
+          float xzz = x * zz, yyz = yy * z, yzz = y * zz;
+          float xyz = x * y * z;
+
+          color += -0.590043 * y * (3.0 * xx - yy) * sh_rest_24_26;               // Y(3X²-Y²)
+          color += 2.890611 * xyz * sh_rest_27_29;                                 // XYZ
+          color += -0.457045 * y * (4.0 * zz - xx - yy) * sh_rest_30_32;         // Y(4Z²-X²-Y²)
+          color += 0.373176 * z * (2.0 * zz - 3.0 * xx - 3.0 * yy) * sh_rest_33_35; // Z(2Z²-3X²-3Y²)
+          color += -0.457045 * x * (4.0 * zz - xx - yy) * sh_rest_36_38;         // X(4Z²-X²-Y²)
+          color += 1.445305 * z * (xx - yy) * sh_rest_39_41;                     // Z(X²-Y²)
+          color += -0.590043 * x * (xx - 3.0 * yy) * sh_rest_42_44;              // X(X²-3Y²)
+
+          return max(vec3(0.0), color);
       }
 
       // Función de conversión Cuaternio a Matriz de Rotación 3x3
@@ -610,14 +1111,21 @@ export class GaussianSplatLoader {
           
           // Guardamos el radio para escalar gl_PointCoord en el fragment
           vDistance = radius_pixels;
-          // Calculate camera direction for spherical harmonics
+          
+          // 1. Calcular dirección de cámara en World Space
           vec4 worldPos = modelMatrix * vec4(position, 1.0);
-          vWorldPos = worldPos.xyz;
-          // Calculate camera direction for spherical harmonics
-          vec3 cameraPos = cameraPosition;
-          vCameraDir = normalize(cameraPos - vWorldPos);
-          // Evaluate spherical harmonics for view-dependent color
-          vColor = evaluateSphericalHarmonics(vCameraDir, sh_dc, harmonicDegree);
+          vec3 viewDir = normalize(cameraPosition - worldPos.xyz);
+
+          // 2. Convertir dirección de cámara a sistema de coordenadas LOCAL del punto
+          //vec3 shDir = vec3(viewDir.x, viewDir.z, -viewDir.y); // estandar in som exporters
+          //vec3 shDir = vec3(viewDir.x, -viewDir.y, viewDir.z);
+          //vec3 shDir = vec3(-viewDir.x, -viewDir.y, -viewDir.z);
+          vec3 shDir = vec3(viewDir.x, -viewDir.y, -viewDir.z);// Three.js Y-up to COLMAP Y-down conversion
+          //vec3 shDir = viewDir;
+          // 3. Evaluar SH con la dirección LOCAL usando coordenadas de textura
+          //vColor = vec3(shDir.x, shDir.y, shDir.z);
+          vColor = evaluateSphericalHarmonics(shDir , shTexCoord, harmonicDegree);
+          
           
           //gl_PointSize = 10.0 * pointScale;
           gl_PointSize = clamp(gl_PointSize, 2.0, 200000.0);
@@ -678,7 +1186,23 @@ export class GaussianSplatLoader {
         cameraPosition: { value: new THREE.Vector3() },
         harmonicDegree: { value: harmonicDegree },
         pointScale: { value: pointScale },
-        chiScale: { value: chiScale }
+        chiScale: { value: chiScale },
+        shDcTexture: { value: this.shTextures?.shDcTexture || null },
+        shRestTexture1: { value: this.shTextures?.shRestTexture1 || null },
+        shRestTexture2: { value: this.shTextures?.shRestTexture2 || null },
+        shRestTexture3: { value: this.shTextures?.shRestTexture3 || null },
+        shRestTexture4: { value: this.shTextures?.shRestTexture4 || null },
+        shRestTexture5: { value: this.shTextures?.shRestTexture5 || null },
+        shRestTexture6: { value: this.shTextures?.shRestTexture6 || null },
+        shRestTexture7: { value: this.shTextures?.shRestTexture7 || null },
+        shRestTexture8: { value: this.shTextures?.shRestTexture8 || null },
+        shRestTexture9: { value: this.shTextures?.shRestTexture9 || null },
+        shRestTexture10: { value: this.shTextures?.shRestTexture10 || null },
+        shRestTexture11: { value: this.shTextures?.shRestTexture11 || null },
+        shRestTexture12: { value: this.shTextures?.shRestTexture12 || null },
+        shRestTexture13: { value: this.shTextures?.shRestTexture13 || null },
+        shRestTexture14: { value: this.shTextures?.shRestTexture14 || null },
+        shRestTexture15: { value: this.shTextures?.shRestTexture15 || null }
       },
       vertexColors: true
     });

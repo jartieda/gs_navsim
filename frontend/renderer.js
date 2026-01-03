@@ -300,6 +300,7 @@ function updateSorting(scene, camera) {
 }
 
 function updateSplatUniforms(camera) {
+
   const width = window.innerWidth;
   const height = window.innerHeight;
   const fovRad = THREE.MathUtils.degToRad(camera.fov);
@@ -312,6 +313,15 @@ function updateSplatUniforms(camera) {
     console.warn("currentPointCloud.material or its uniforms are not defined.");
     return;
   } else{
+
+    // Inside your render loop
+    const worldCamPos = new THREE.Vector3();
+    camera.getWorldPosition(worldCamPos);
+    currentPointCloud.material.uniforms.cameraPosition.value.copy(worldCamPos);
+
+    // other uniforms...
+    
+
     if (!currentPointCloud.material.uniforms.focal || !currentPointCloud.material.uniforms.viewport) {
       console.warn("currentPointCloud.material.uniforms.focal or viewport are not defined.");
       return;

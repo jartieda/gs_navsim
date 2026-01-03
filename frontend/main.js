@@ -12,6 +12,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const resetBtn = document.getElementById('resetRobot');
   const materialSelector = document.getElementById('materialSelector');
   const harmonicDegree = document.getElementById('harmonicDegree');
+  const shDirMode = document.getElementById('shDirMode');
   const pointScale = document.getElementById('pointScale');
   const chiScale = document.getElementById('chiScale');
   const fileInfo = document.getElementById('fileInfo');
@@ -27,6 +28,10 @@ document.addEventListener('DOMContentLoaded', () => {
   const cameraY = document.getElementById('cameraY');
   const cameraZ = document.getElementById('cameraZ');
   const cameraTarget = document.getElementById('cameraTarget');
+  
+  // FPS monitoring elements
+  const fpsCounter = document.getElementById('fpsCounter');
+  const frameTime = document.getElementById('frameTime');
 
   const { scene, camera, renderer, controls } = setupScene(canvas);
   
@@ -41,8 +46,54 @@ document.addEventListener('DOMContentLoaded', () => {
   // Store reference to current point cloud for material switching
   let currentPointCloud = null;
   
+  // FPS monitoring variables
+  let frameCount = 0;
+  let lastTime = performance.now();
+  let fps = 0;
+  let lastFrameTime = 0;
+  
+  // FPS monitoring function
+  function updateFPS() {
+    const currentTime = performance.now();
+    const deltaTime = currentTime - lastTime;
+    lastFrameTime = deltaTime;
+    
+    frameCount++;
+    
+    // Update FPS every 10 frames for smoother display
+    if (frameCount >= 10) {
+      fps = Math.round(frameCount * 1000 / (currentTime - (lastTime - deltaTime * 9)));
+      frameCount = 0;
+      
+      // Update display
+      fpsCounter.textContent = fps;
+      frameTime.textContent = lastFrameTime.toFixed(2);
+    }
+    
+    lastTime = currentTime;
+  }
+  
   // Setup controls
   const keyboardControls = new KeyboardControls(robot, cameraController, renderer, scene, updateDisplay);
+  
+  // Main render loop with FPS monitoring
+  function animate() {
+    requestAnimationFrame(animate);
+    
+    // Update FPS counter
+    updateFPS();
+    
+    // Update sorting for current render mode
+    if (currentPointCloud) {
+      updateObjectSorting(scene, camera);
+    }
+    
+    // Render the scene
+    renderer.render(scene, camera);
+  }
+  
+  // Start the render loop
+  animate();
   
   // Function to update robot position display
   function updateRobotDisplay() {
@@ -112,10 +163,6 @@ document.addEventListener('DOMContentLoaded', () => {
         );
         camera.lookAt(center);
         
-        // Initial render
-        updateObjectSorting(scene, camera);
-        renderer.render(scene, camera);
-        
         // Update displays
         updateDisplay();
         
@@ -136,21 +183,17 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   exportBtn.addEventListener('click', () => {
-    updateObjectSorting(scene, camera);
-    renderer.render(scene, camera);
     exportImage(renderer);
   });
 
   saveBtn.addEventListener('click', () => {
-    updateObjectSorting(scene, camera);
-    renderer.render(scene, camera);
     const imageData = renderer.domElement.toDataURL('image/png');
     saveImageToServer(imageData);
   });
 
   resetBtn.addEventListener('click', () => {
     // Reset robot to origin
-    robot.setPosition(0, 0, 0);
+    robot.setPosition(0, 0.3, 0);
     robot.setRotation(0);
     
     // Update camera to follow robot
@@ -158,10 +201,6 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Update displays
     updateDisplay();
-    
-    // Render scene
-    updateObjectSorting(scene, camera);
-    renderer.render(scene, camera);
     
     console.log('Robot position reset to origin');
   });
@@ -192,17 +231,16 @@ document.addEventListener('DOMContentLoaded', () => {
       const loader = currentPointCloud.userData.loader;
       const degree = parseInt(harmonicDegree.value);
       const chi = parseFloat(chiScale.value);
+      const shMode = parseInt(shDirMode.value);
       
       if (mode === 'gaussian') {
-        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
+        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi, shMode);
       } else {
         currentPointCloud.material = loader.createSimplePointMaterial();
       }
     }
 
-    // Re-render scene
-    updateObjectSorting(scene, camera);
-    renderer.render(scene, camera);
+    console.log('Render mode changed to:', mode);
   });
 
   harmonicDegree.addEventListener('change', (e) => {
@@ -220,14 +258,40 @@ document.addEventListener('DOMContentLoaded', () => {
       const currentMode = materialSelector.value;
       const scale = parseFloat(pointScale.value);
       const chi = parseFloat(chiScale.value);
+      const shMode = parseInt(shDirMode.value);
       
       // Update the material with the new harmonic degree
       if (currentMode === 'gaussian') {
-        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
+        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi, shMode);
       }
       
-      // Re-render scene
-      renderer.render(scene, camera);
+      console.log('Harmonic degree changed to:', degree);
+    }
+  });
+
+  shDirMode.addEventListener('change', (e) => {
+    if (!currentPointCloud) {
+      console.warn('No point cloud loaded');
+      return;
+    }
+
+    const shMode = parseInt(e.target.value);
+    console.log('Switching to SH direction mode:', shMode);
+
+    // Only update if we have a Gaussian splat material
+    if (currentPointCloud.userData.type !== 'standard_ply') {
+      const loader = currentPointCloud.userData.loader;
+      const currentMode = materialSelector.value;
+      const degree = parseInt(harmonicDegree.value);
+      const scale = parseFloat(pointScale.value);
+      const chi = parseFloat(chiScale.value);
+      
+      // Update the material with the new SH direction mode
+      if (currentMode === 'gaussian') {
+        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi, shMode);
+      }
+      
+      console.log('SH direction mode changed to:', shMode);
     }
   });
 
@@ -246,14 +310,13 @@ document.addEventListener('DOMContentLoaded', () => {
       const currentMode = materialSelector.value;
       const degree = parseInt(harmonicDegree.value);
       const chi = parseFloat(chiScale.value);
+      const shMode = parseInt(shDirMode.value);
       
       // Update the material with the new point scale
       if (currentMode === 'gaussian') {
-        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
+        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi, shMode);
       }
-      // Re-render scene
-      updateObjectSorting(scene, camera);
-      renderer.render(scene, camera);
+      console.log('Point scale changed to:', scale);
     }
   });
 
@@ -275,10 +338,10 @@ document.addEventListener('DOMContentLoaded', () => {
       if (currentMode === 'gaussian') {
         const degree = parseInt(harmonicDegree.value);
         const scale = parseFloat(pointScale.value);
+        const shMode = parseInt(shDirMode.value);
         
-        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
-        updateObjectSorting(scene, camera);
-        renderer.render(scene, camera);
+        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi, shMode);
+        console.log('Chi scale changed to:', chi);
       }
     }
   });
