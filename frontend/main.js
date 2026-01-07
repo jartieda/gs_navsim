@@ -134,7 +134,13 @@ document.addEventListener('DOMContentLoaded', () => {
   updateDisplay();
   
   // Setup socket communication
-  setupSocket(robot, scene, camera, renderer, cameraController, updateDisplay);
+  console.log('Setting up socket communication...');
+  const socket = setupSocket(robot, scene, camera, renderer, cameraController, updateDisplay);
+  if (socket) {
+    console.log('Socket setup completed successfully');
+  } else {
+    console.error('Socket setup failed');
+  }
 
   plyLoader.addEventListener('change', async (e) => {
     const file = e.target.files[0];

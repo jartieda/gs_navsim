@@ -46,62 +46,74 @@ app.listen(PORT, () => {
 // WebSocket server for robot commands
 const wss = new WebSocket.Server({ port: WS_PORT });
 
-wss.on('connection', (ws) => {
-  console.log('Robot client connected');
+// Store connected clients (simulator frontend and robot controller)
+let frontendClient = null;
+let robotClient = null;
+
+wss.on('connection', (ws, req) => {
+  console.log('New client connected');
   
   ws.on('message', (message) => {
     try {
       const msg = JSON.parse(message);
-      if (msg.type === 'image') {
-        // Save rendered image with timestamp
-        const timestamp = new Date().toISOString().replace(/[:.]/g, '-');
-        const imageData = msg.data.replace(/^data:image\/png;base64,/, '');
-        const filename = `rendered_image_${timestamp}.png`;
-        
-        //fs.writeFileSync(path.join(__dirname, filename), imageData, 'base64');
-        console.log(`Saved rendered image: ${filename}`);
+      console.log(`Received message from client: ${msg.type}`);
+      
+      // Handle client identification
+      if (msg.type === 'identify') {
+        if (msg.client === 'frontend') {
+          frontendClient = ws;
+          console.log('Frontend client identified');
+        } else if (msg.client === 'robot') {
+          robotClient = ws;
+          console.log('Robot client identified');
+        }
+        return;
       }
+      
+      // Handle robot commands from explore.py
+      if (msg.type === 'robot_command' && frontendClient) {
+        // Forward command to frontend for execution
+        frontendClient.send(JSON.stringify({
+          type: 'movement_command',
+          command: msg.command,
+          value: msg.value
+        }));
+        console.log(`Forwarded robot command: ${msg.command}`);
+      }
+      
+      // Handle rendered images from frontend
+      if (msg.type === 'rendered_image' && robotClient) {
+        // Forward image to robot client
+        console.log('Received image from frontend, forwarding to robot...');
+        robotClient.send(JSON.stringify({
+          type: 'image_data',
+          data: msg.data,
+          timestamp: msg.timestamp
+        }));
+        console.log('Forwarded rendered image to robot client');
+      }
+      
+      // Handle image requests from robot
+      if (msg.type === 'request_image' && frontendClient) {
+        // Request image capture from frontend
+        console.log('Robot requested image, forwarding to frontend...');
+        frontendClient.send(JSON.stringify({
+          type: 'capture_image'
+        }));
+      }
+      
     } catch (error) {
       console.error('Error processing message:', error);
     }
   });
 
   ws.on('close', () => {
-    console.log('Robot client disconnected');
-  });
-
-  // Example robot command sender
-  let commandInterval;
-  
-  // Send initial test commands after a delay
-  setTimeout(() => {
-    console.log('Starting robot command sequence...');
-    
-    // Send forward command
-    if (ws.readyState === WebSocket.OPEN) {
-      ws.send(JSON.stringify({ type: 'forward' }));
-      console.log('Sent: forward command');
-    }
-    
-    // Send periodic turn commands
-    commandInterval = setInterval(() => {
-      if (ws.readyState === WebSocket.OPEN) {
-        const commands = [
-          { type: 'forward' },
-          { type: 'turn', value: Math.PI / 8 }, // 22.5 degrees
-          { type: 'turn', value: -Math.PI / 8 }
-        ];
-        
-        const command = commands[Math.floor(Math.random() * commands.length)];
-        ws.send(JSON.stringify(command));
-        console.log(`Sent: ${command.type} command`);
-      }
-    }, 30000);
-  }, 2000);
-
-  ws.on('close', () => {
-    if (commandInterval) {
-      clearInterval(commandInterval);
+    if (ws === frontendClient) {
+      frontendClient = null;
+      console.log('Frontend client disconnected');
+    } else if (ws === robotClient) {
+      robotClient = null;
+      console.log('Robot client disconnected');
     }
   });
 });

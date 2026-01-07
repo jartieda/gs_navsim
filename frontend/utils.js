@@ -56,8 +56,8 @@ export class CameraController {
   constructor(camera, robot, onUpdateCallback = null) {
     this.camera = camera;
     this.robot = robot;
-    this.offset = new THREE.Vector3(0, 1.5, 3);
-    //this.offset = new THREE.Vector3(0, 0, 0.1);
+    //this.offset = new THREE.Vector3(0, 1.5, 3);
+    this.offset = new THREE.Vector3(0, 0, 0.1);
     this.lookAhead = 1.0;
     this.onUpdateCallback = onUpdateCallback;
   }
