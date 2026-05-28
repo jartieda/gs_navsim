@@ -7,6 +7,10 @@ import { GaussianSplatLoader } from './gaussian-splat-loader.js';
 
 let currentPointCloud = null;
 
+// Camera state tracking to avoid sorting every frame
+let _lastSortCamPos = new THREE.Vector3(Infinity, Infinity, Infinity);
+let _lastSortCamQuat = new THREE.Quaternion(0, 0, 0, 0);
+
 export function setupScene(canvas) {
   const renderer = new THREE.WebGLRenderer({ canvas, preserveDrawingBuffer: true });
   renderer.setSize(window.innerWidth, window.innerHeight);
@@ -188,113 +192,61 @@ export async function loadPLY(file) {
   }
 }
 function updateSorting(scene, camera) {
-    const existingObjects = scene.children.filter(child => child.userData && 
+    const existingObjects = scene.children.filter(child => child.userData &&
         (child.userData.type === 'object_mode' || child.userData.type === 'ellipse_mode'));
 
-    const cameraPosition = camera.position;
+    const cx = camera.position.x;
+    const cy = camera.position.y;
+    const cz = camera.position.z;
 
     existingObjects.forEach(objectGroup => {
-        // Find the InstancedMesh within the group
-        let instancedMesh = null;
-        let positions = null;
-        let numSplats = 0;
+        const cache = objectGroup.userData.sortCache;
+        if (!cache) return; // group has no sort cache (e.g. ellipse Points mode)
 
-        if (objectGroup.children && objectGroup.children.length > 0) {
-            // Get the InstancedMesh from the group
-            instancedMesh = objectGroup.children[0];
-            if (instancedMesh && instancedMesh.isInstancedMesh) {
-                numSplats = instancedMesh.count;
-                
-                // Extract positions from instance matrices
-                positions = new Float32Array(numSplats * 3);
-                const matrix = new THREE.Matrix4();
-                const position = new THREE.Vector3();
-                
-                for (let i = 0; i < numSplats; i++) {
-                    instancedMesh.getMatrixAt(i, matrix);
-                    position.setFromMatrixPosition(matrix);
-                    positions[i * 3] = position.x;
-                    positions[i * 3 + 1] = position.y;
-                    positions[i * 3 + 2] = position.z;
-                }
-            }
+        const instancedMesh = objectGroup.children[0];
+        if (!instancedMesh || !instancedMesh.isInstancedMesh) return;
+
+        const numSplats = instancedMesh.count;
+        const { origPositions, origMatData, origColorData, origOpacityData, depthData, indices } = cache;
+
+        // 1. Calculate depths using pre-cached original positions — no allocation
+        for (let i = 0; i < numSplats; i++) {
+            const i3 = i * 3;
+            const dx = origPositions[i3]     - cx;
+            const dy = origPositions[i3 + 1] - cy;
+            const dz = origPositions[i3 + 2] - cz;
+            depthData[i] = dx * dx + dy * dy + dz * dz;
         }
 
-        if (positions && numSplats > 0) {
-            // Initialize sorting arrays
-            const depthData = new Float32Array(numSplats);
-            const indices = new Array(numSplats);
-            
-            for (let i = 0; i < numSplats; i++) {
-                indices[i] = i;
+        // 2. Sort pre-allocated indices far-to-near (Back-to-Front)
+        indices.sort((a, b) => depthData[b] - depthData[a]);
+
+        // 3. Write matrices in sorted order directly from snapshot — no Matrix4 allocation
+        const matDst = instancedMesh.instanceMatrix.array;
+        for (let j = 0; j < numSplats; j++) {
+            const src = indices[j] * 16;
+            const dst = j * 16;
+            matDst.set(origMatData.subarray(src, src + 16), dst);
+        }
+        instancedMesh.instanceMatrix.needsUpdate = true;
+
+        // 4. Write colors in sorted order — no Color allocation
+        if (origColorData && instancedMesh.instanceColor) {
+            const colDst = instancedMesh.instanceColor.array;
+            for (let j = 0; j < numSplats; j++) {
+                const src = indices[j] * 3;
+                colDst.set(origColorData.subarray(src, src + 3), j * 3);
             }
+            instancedMesh.instanceColor.needsUpdate = true;
+        }
 
-            // 1. Calculate squared distances (faster than square root)
-            for (let i = 0; i < numSplats; i++) {
-                const x = positions[i * 3];
-                const y = positions[i * 3 + 1];
-                const z = positions[i * 3 + 2];
-                
-                // Euclidean distance from camera to splat
-                depthData[i] = Math.pow(x - cameraPosition.x, 2) + 
-                              Math.pow(y - cameraPosition.y, 2) + 
-                              Math.pow(z - cameraPosition.z, 2);
+        // 5. Write opacities in sorted order — no allocation
+        if (origOpacityData && instancedMesh.geometry.attributes.instanceOpacity) {
+            const opacDst = instancedMesh.geometry.attributes.instanceOpacity.array;
+            for (let j = 0; j < numSplats; j++) {
+                opacDst[j] = origOpacityData[indices[j]];
             }
-
-            // 2. Sort indices from far to near (Back-to-Front)
-            indices.sort((a, b) => depthData[b] - depthData[a]);
-
-            // 3. Store original matrices and attributes before reordering
-            const originalMatrices = [];
-            const originalColors = [];
-            const originalOpacities = [];
-            const matrix = new THREE.Matrix4();
-            const color = new THREE.Color();
-
-            for (let i = 0; i < numSplats; i++) {
-                instancedMesh.getMatrixAt(i, matrix);
-                originalMatrices[i] = matrix.clone();
-                
-                if (instancedMesh.instanceColor) {
-                    instancedMesh.getColorAt(i, color);
-                    originalColors[i] = color.clone();
-                }
-                
-                if (instancedMesh.geometry.attributes.instanceOpacity) {
-                    originalOpacities[i] = instancedMesh.geometry.attributes.instanceOpacity.array[i];
-                }
-            }
-
-            // 4. Reassign matrices in InstancedMesh according to new order
-            objectGroup.children.forEach((childMesh) => {
-                if (childMesh.isInstancedMesh) {
-                    for (let j = 0; j < numSplats; j++) {
-                        const originalIdx = indices[j];
-                        
-                        // Set matrix from original
-                        childMesh.setMatrixAt(j, originalMatrices[originalIdx]);
-                        
-                        // Set color if available
-                        if (childMesh.instanceColor && originalColors[originalIdx]) {
-                            childMesh.setColorAt(j, originalColors[originalIdx]);
-                        }
-                        
-                        // Update opacity attribute if available
-                        if (childMesh.geometry.attributes.instanceOpacity && originalOpacities[originalIdx] !== undefined) {
-                            childMesh.geometry.attributes.instanceOpacity.array[j] = originalOpacities[originalIdx];
-                        }
-                    }
-                    
-                    // Mark for update
-                    childMesh.instanceMatrix.needsUpdate = true;
-                    if (childMesh.instanceColor) {
-                        childMesh.instanceColor.needsUpdate = true;
-                    }
-                    if (childMesh.geometry.attributes.instanceOpacity) {
-                        childMesh.geometry.attributes.instanceOpacity.needsUpdate = true;
-                    }
-                }
-            });
+            instancedMesh.geometry.attributes.instanceOpacity.needsUpdate = true;
         }
     });
 }
@@ -348,10 +300,20 @@ function updatePointCloudSorting(scene, camera) {
 
 // Export the sorting function for use in main render loop
 export function updateObjectSorting(scene, camera) {
+  // Uniforms must update every frame (cameraPosition, focal, viewport)
   updateSplatUniforms(camera);
-  updateSorting(scene, camera);
-  // Also handle point cloud sorting for Gaussian splats
-  updatePointCloudSorting(scene, camera);
+
+  // Only re-sort when the camera has actually moved or rotated
+  const posDeltaSq = _lastSortCamPos.distanceToSquared(camera.position);
+  const quatDot = Math.abs(_lastSortCamQuat.dot(camera.quaternion));
+  const cameraMoved = posDeltaSq > 1e-6 || quatDot < 0.9999995;
+
+  if (cameraMoved) {
+    _lastSortCamPos.copy(camera.position);
+    _lastSortCamQuat.copy(camera.quaternion);
+    updateSorting(scene, camera);
+    updatePointCloudSorting(scene, camera);
+  }
 }
 
 export function renderGaussianSplatting(scene, pointCloud) {
@@ -782,7 +744,19 @@ function renderObjectModeInstanced(scene, positions, scales, rotations, colors, 
   if (instancedMesh.instanceColor) {
     instancedMesh.instanceColor.needsUpdate = true;
   }
-  
+
+  // Pre-allocate sort cache once — avoids all per-frame allocations during sorting
+  const _sortIndices = new Uint32Array(vertexCount);
+  for (let i = 0; i < vertexCount; i++) _sortIndices[i] = i;
+  objectGroup.userData.sortCache = {
+    origPositions:  positions.slice(0, vertexCount * 3),
+    origMatData:    instancedMesh.instanceMatrix.array.slice(),
+    origColorData:  instancedMesh.instanceColor ? instancedMesh.instanceColor.array.slice() : null,
+    origOpacityData: opacities ? new Float32Array(opacities) : null,
+    depthData: new Float32Array(vertexCount),
+    indices:   _sortIndices,
+  };
+
   objectGroup.add(instancedMesh);
   
   // Add the group to the scene
@@ -805,33 +779,42 @@ export function handleNavigation(e, robot, camera, renderer, scene) {
   console.warn('handleNavigation is deprecated. Use KeyboardControls class instead.');
 }
 
-export function exportImage(renderer, filename = null) {
-  // Ensure we have a clean render
-  const canvas = renderer.domElement;
-  
-  // Create high-resolution render for export
+export function exportImage(renderer, scene, camera, filename = null) {
   const originalSize = renderer.getSize(new THREE.Vector2());
   const exportScale = 2; // 2x resolution for better quality
-  
-  renderer.setSize(originalSize.x * exportScale, originalSize.y * exportScale);
-  
-  // Re-render at higher resolution
-  const scene = renderer.info.render.frame > 0 ? renderer.getRenderTarget() : null;
-  
-  // Get image data
-  const dataURL = canvas.toDataURL('image/png');
-  
-  // Restore original size
+  const expW = Math.round(originalSize.x * exportScale);
+  const expH = Math.round(originalSize.y * exportScale);
+
+  // Update Gaussian splat viewport uniforms for the target size
+  function setSplatUniforms(w, h) {
+    if (currentPointCloud?.material?.uniforms?.focal) {
+      const fovRad = THREE.MathUtils.degToRad(camera.fov);
+      const fy = h / (2 * Math.tan(fovRad / 2));
+      currentPointCloud.material.uniforms.focal.value.set(fy, fy);
+      currentPointCloud.material.uniforms.viewport.value.set(w, h);
+    }
+  }
+
+  // Render at 2x resolution
+  renderer.setSize(expW, expH);
+  setSplatUniforms(expW, expH);
+  renderer.render(scene, camera);
+
+  const dataURL = renderer.domElement.toDataURL('image/png');
+
+  // Restore original size and re-render to avoid a stale canvas
   renderer.setSize(originalSize.x, originalSize.y);
-  
-  // Create download
+  setSplatUniforms(originalSize.x, originalSize.y);
+  renderer.render(scene, camera);
+
+  // Trigger download
   const link = document.createElement('a');
   link.href = dataURL;
   link.download = filename || `scene_${new Date().toISOString().replace(/[:.]/g, '-')}.png`;
   document.body.appendChild(link);
   link.click();
   document.body.removeChild(link);
-  
+
   console.log('Image exported:', link.download);
   return dataURL;
 }

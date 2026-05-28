@@ -12,7 +12,6 @@ document.addEventListener('DOMContentLoaded', () => {
   const resetBtn = document.getElementById('resetRobot');
   const materialSelector = document.getElementById('materialSelector');
   const harmonicDegree = document.getElementById('harmonicDegree');
-  const shDirMode = document.getElementById('shDirMode');
   const pointScale = document.getElementById('pointScale');
   const chiScale = document.getElementById('chiScale');
   const fileInfo = document.getElementById('fileInfo');
@@ -48,29 +47,24 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // FPS monitoring variables
   let frameCount = 0;
-  let lastTime = performance.now();
-  let fps = 0;
-  let lastFrameTime = 0;
-  
+  let windowStartTime = performance.now();
+  let prevFrameTime = performance.now();
+
   // FPS monitoring function
   function updateFPS() {
     const currentTime = performance.now();
-    const deltaTime = currentTime - lastTime;
-    lastFrameTime = deltaTime;
-    
+    const dt = currentTime - prevFrameTime;
+    prevFrameTime = currentTime;
     frameCount++;
-    
-    // Update FPS every 10 frames for smoother display
+
+    // Update display every 10 frames using the true elapsed window time
     if (frameCount >= 10) {
-      fps = Math.round(frameCount * 1000 / (currentTime - (lastTime - deltaTime * 9)));
+      const elapsed = currentTime - windowStartTime;
+      fpsCounter.textContent = Math.round(frameCount * 1000 / elapsed);
+      frameTime.textContent = dt.toFixed(2);
       frameCount = 0;
-      
-      // Update display
-      fpsCounter.textContent = fps;
-      frameTime.textContent = lastFrameTime.toFixed(2);
+      windowStartTime = currentTime;
     }
-    
-    lastTime = currentTime;
   }
   
   // Setup controls
@@ -189,7 +183,7 @@ document.addEventListener('DOMContentLoaded', () => {
   });
 
   exportBtn.addEventListener('click', () => {
-    exportImage(renderer);
+    exportImage(renderer, scene, camera);
   });
 
   saveBtn.addEventListener('click', () => {
@@ -237,10 +231,9 @@ document.addEventListener('DOMContentLoaded', () => {
       const loader = currentPointCloud.userData.loader;
       const degree = parseInt(harmonicDegree.value);
       const chi = parseFloat(chiScale.value);
-      const shMode = parseInt(shDirMode.value);
       
       if (mode === 'gaussian') {
-        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi, shMode);
+        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
       } else {
         currentPointCloud.material = loader.createSimplePointMaterial();
       }
@@ -264,40 +257,13 @@ document.addEventListener('DOMContentLoaded', () => {
       const currentMode = materialSelector.value;
       const scale = parseFloat(pointScale.value);
       const chi = parseFloat(chiScale.value);
-      const shMode = parseInt(shDirMode.value);
       
       // Update the material with the new harmonic degree
       if (currentMode === 'gaussian') {
-        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi, shMode);
+        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
       }
       
       console.log('Harmonic degree changed to:', degree);
-    }
-  });
-
-  shDirMode.addEventListener('change', (e) => {
-    if (!currentPointCloud) {
-      console.warn('No point cloud loaded');
-      return;
-    }
-
-    const shMode = parseInt(e.target.value);
-    console.log('Switching to SH direction mode:', shMode);
-
-    // Only update if we have a Gaussian splat material
-    if (currentPointCloud.userData.type !== 'standard_ply') {
-      const loader = currentPointCloud.userData.loader;
-      const currentMode = materialSelector.value;
-      const degree = parseInt(harmonicDegree.value);
-      const scale = parseFloat(pointScale.value);
-      const chi = parseFloat(chiScale.value);
-      
-      // Update the material with the new SH direction mode
-      if (currentMode === 'gaussian') {
-        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi, shMode);
-      }
-      
-      console.log('SH direction mode changed to:', shMode);
     }
   });
 
@@ -316,11 +282,10 @@ document.addEventListener('DOMContentLoaded', () => {
       const currentMode = materialSelector.value;
       const degree = parseInt(harmonicDegree.value);
       const chi = parseFloat(chiScale.value);
-      const shMode = parseInt(shDirMode.value);
       
       // Update the material with the new point scale
       if (currentMode === 'gaussian') {
-        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi, shMode);
+        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
       }
       console.log('Point scale changed to:', scale);
     }
@@ -344,9 +309,8 @@ document.addEventListener('DOMContentLoaded', () => {
       if (currentMode === 'gaussian') {
         const degree = parseInt(harmonicDegree.value);
         const scale = parseFloat(pointScale.value);
-        const shMode = parseInt(shDirMode.value);
         
-        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi, shMode);
+        currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
         console.log('Chi scale changed to:', chi);
       }
     }
