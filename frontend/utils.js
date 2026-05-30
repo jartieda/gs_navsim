@@ -44,6 +44,44 @@ export class RobotController {
     this.rotation = rotation;
   }
 
+  /**
+   * Return the position that would result from applying `command` without
+   * actually moving the robot.  Used for collision pre-checks.
+   *
+   * @param {string} command  'forward'|'backward'|'turn_left'|'turn_right'|'turn'|'set_velocity'
+   * @param {*}      value    Command-specific value (distance, angle, or [v,w] array).
+   * @returns {THREE.Vector3} Projected new position (clone — does not mutate robot).
+   */
+  getProjectedPosition(command, value) {
+    const pos = this.position.clone();
+    const rot = this.rotation;
+
+    if (command === 'forward') {
+      const dist = (value != null) ? Math.abs(value) : this.moveSpeed;
+      pos.x -= dist * Math.sin(rot);
+      pos.z -= dist * Math.cos(rot);
+    } else if (command === 'backward') {
+      const dist = (value != null) ? Math.abs(value) : this.moveSpeed;
+      pos.x += dist * Math.sin(rot);
+      pos.z += dist * Math.cos(rot);
+    } else if (command === 'set_velocity') {
+      // value = [v, w]; only linear velocity changes position
+      const v = Array.isArray(value) ? (value[0] || 0) : 0;
+      if (Math.abs(v) > 0.01) {
+        const dist = Math.abs(v);
+        if (v > 0) {
+          pos.x -= dist * Math.sin(rot);
+          pos.z -= dist * Math.cos(rot);
+        } else {
+          pos.x += dist * Math.sin(rot);
+          pos.z += dist * Math.cos(rot);
+        }
+      }
+    }
+    // turn_left / turn_right / turn do not change position — return clone as-is
+    return pos;
+  }
+
   updateRobotMarker(marker) {
     if (marker) {
       marker.position.copy(this.position);

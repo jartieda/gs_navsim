@@ -3,6 +3,8 @@ import { setupScene, loadPLY, renderGaussianSplatting, renderObjectMode, renderE
 import { setupSocket } from './socket.js';
 import { RobotController, CameraController, createRobotMarker, createGaussianMaterial } from './utils.js';
 import { KeyboardControls } from './controls.js';
+import { MaskManager } from './mask.js';
+import { MaskEditor } from './mask_editor.js';
 
 document.addEventListener('DOMContentLoaded', () => {
   const canvas = document.getElementById('canvas');
@@ -44,6 +46,14 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Store reference to current point cloud for material switching
   let currentPointCloud = null;
+
+  // ── Obstacle mask system ─────────────────────────────────────────────────
+  const maskManager = new MaskManager();
+  const maskEditor  = new MaskEditor(maskManager, robot);
+
+  document.getElementById('toggleMaskEditor').addEventListener('click', () => {
+    maskEditor.toggle();
+  });
   
   // FPS monitoring variables
   let frameCount = 0;
@@ -122,6 +132,7 @@ document.addEventListener('DOMContentLoaded', () => {
   function updateDisplay() {
     updateRobotDisplay();
     updateCameraDisplay();
+    if (maskEditor.visible) maskEditor.render();
   }
   
   // Initial display update
@@ -129,7 +140,7 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Setup socket communication
   console.log('Setting up socket communication...');
-  const socket = setupSocket(robot, scene, camera, renderer, cameraController, updateDisplay);
+  const socket = setupSocket(robot, scene, camera, renderer, cameraController, maskManager, updateDisplay);
   if (socket) {
     console.log('Socket setup completed successfully');
   } else {
@@ -147,25 +158,39 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('currentPointCloud set to loaded point cloud');
         const { center, distance } = renderGaussianSplatting(scene, currentPointCloud);
         console.log('Point cloud loaded and rendered');
-        // Update robot   position and camera to center on the loaded scene
+
+        // Apply Gaussian splat shader immediately with the current UI settings,
+        // so the user doesn't have to touch any selector after loading.
+        if (currentPointCloud.userData.type !== 'standard_ply') {
+          const loader = currentPointCloud.userData.loader;
+          const mode   = materialSelector.value;
+          const degree = parseInt(harmonicDegree.value);
+          const scale  = parseFloat(pointScale.value);
+          const chi    = parseFloat(chiScale.value);
+          if (mode === 'gaussian') {
+            currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
+          } else if (mode === 'points') {
+            currentPointCloud.material = loader.createSimplePointMaterial();
+          }
+        }
+
+        // Place robot at scene centre and let cameraController position the
+        // camera — keeps them in sync without a manual reset.
         robot.setPosition(center.x, center.y, center.z);
+        robot.setRotation(0);
         controls.center.copy(center);
         controls.distance = distance;
-        
-        // Update robot marker
         robot.updateRobotMarker(robotMarker);
-        
-        // Position camera relative to scene center
-        camera.position.set(
-          center.x,
-          center.y + distance * 0.3,
-          center.z + distance * 0.8
-        );
-        camera.lookAt(center);
+        cameraController.update();
         
         // Update displays
         updateDisplay();
-        
+
+        // Feed scene geometry to mask editor for top-down background preview
+        const positions = pointCloud.geometry.attributes.position.array;
+        maskEditor.setScenePoints(positions);
+        if (maskEditor.visible) maskEditor.render();
+
         // Update file info
         const userData = pointCloud.userData;
         if (userData.type === 'standard_ply') {

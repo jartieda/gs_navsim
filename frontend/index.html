@@ -71,6 +71,128 @@
       font-size: 10px;
       opacity: 0.8;
     }
+
+    /* ── Mask editor panel ───────────────────────────────────────────────── */
+    #maskPanel {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 20;
+      background: rgba(10, 10, 30, 0.94);
+      color: #e0e0e0;
+      padding: 12px;
+      border-radius: 8px;
+      display: none;
+      flex-direction: column;
+      gap: 8px;
+      font-family: Arial, sans-serif;
+      font-size: 12px;
+      border: 1px solid rgba(255,255,255,0.18);
+      user-select: none;
+      min-width: 420px;
+    }
+    #maskPanelHeader {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-weight: bold;
+      font-size: 13px;
+    }
+    #maskPanelHeader button {
+      background: transparent;
+      border: none;
+      color: #aaa;
+      font-size: 16px;
+      cursor: pointer;
+      padding: 0 4px;
+      line-height: 1;
+    }
+    #maskPanelHeader button:hover { color: #fff; }
+    #maskPanelInfo {
+      font-size: 10px;
+      color: #aaa;
+      background: rgba(255,255,255,0.06);
+      padding: 4px 6px;
+      border-radius: 4px;
+    }
+    #maskCanvas {
+      border: 1px solid rgba(255,255,255,0.25);
+      cursor: crosshair;
+      border-radius: 4px;
+      display: block;
+      align-self: center;
+    }
+    .mask-toolbar {
+      display: flex;
+      gap: 5px;
+    }
+    .mask-toolbar button, #maskFileActions button {
+      flex: 1;
+      padding: 5px 4px;
+      border: 1px solid rgba(255,255,255,0.25);
+      border-radius: 4px;
+      background: rgba(255,255,255,0.08);
+      color: #ddd;
+      cursor: pointer;
+      font-size: 11px;
+      transition: background 0.15s;
+    }
+    .mask-toolbar button:hover, #maskFileActions button:hover {
+      background: rgba(255,255,255,0.18);
+    }
+    #maskToolBlock.mask-active {
+      background: rgba(220, 50, 50, 0.55);
+      border-color: rgba(220, 80, 80, 0.9);
+      color: #fff;
+    }
+    #maskToolClear.mask-active {
+      background: rgba(50, 200, 100, 0.45);
+      border-color: rgba(50, 200, 100, 0.9);
+      color: #fff;
+    }
+    #maskClearAll {
+      background: rgba(180, 80, 0, 0.4) !important;
+      border-color: rgba(220, 100, 0, 0.7) !important;
+    }
+    #maskClearAll:hover {
+      background: rgba(220, 100, 0, 0.55) !important;
+    }
+    .mask-brush-row {
+      display: flex;
+      align-items: center;
+      gap: 6px;
+      font-size: 11px;
+    }
+    .mask-brush-row input[type="range"] {
+      flex: 1;
+      accent-color: #4CAF50;
+    }
+    .mask-stats {
+      font-size: 10px;
+      color: #888;
+      text-align: right;
+    }
+    #maskFileActions {
+      display: flex;
+      gap: 5px;
+    }
+    /* collision flash overlay */
+    #maskCollisionIndicator {
+      position: absolute;
+      top: 50%;
+      left: 50%;
+      transform: translate(-50%, -50%);
+      background: rgba(220, 30, 30, 0.85);
+      color: #fff;
+      padding: 14px 28px;
+      border-radius: 10px;
+      font-size: 20px;
+      font-weight: bold;
+      display: none;
+      z-index: 50;
+      pointer-events: none;
+      letter-spacing: 1px;
+    }
   </style>
 </head>
 <body>
@@ -79,6 +201,7 @@
     <button id="exportImage">Export Image</button>
     <button id="saveToServer">Save to Server</button>
     <button id="resetRobot">Reset Robot Position</button>
+    <button id="toggleMaskEditor" style="background:#5555cc;">🗺 Editor de Obstáculos</button>
     <div>
       <label for="materialSelector">Render Mode:</label>
       <select id="materialSelector">
@@ -139,6 +262,43 @@
     </div>
   </div>
   <canvas id="canvas"></canvas>
+
+  <!-- Collision flash indicator -->
+  <div id="maskCollisionIndicator">⚠ COLISIÓN</div>
+
+  <!-- Obstacle mask editor panel -->
+  <div id="maskPanel">
+    <div id="maskPanelHeader">
+      <span>🗺 Editor de Obstáculos</span>
+      <button id="maskClose" title="Cerrar">✕</button>
+    </div>
+    <div id="maskPanelInfo">
+      LMB: bloquear &nbsp;·&nbsp; RMB: limpiar &nbsp;·&nbsp; Rueda: pincel &nbsp;·&nbsp; Ctrl+Rueda: zoom &nbsp;·&nbsp; Botón central: pan
+    </div>
+    <canvas id="maskCanvas" width="400" height="400"></canvas>
+    <div class="mask-toolbar">
+      <button id="maskToolBlock">⬛ Bloquear</button>
+      <button id="maskToolClear">⬜ Limpiar</button>
+      <button id="maskClearAll">🗑 Borrar todo</button>
+    </div>
+    <div class="mask-brush-row">
+      <span>Pincel:</span>
+      <input type="range" id="maskBrushSize" min="0.1" max="5.0" step="0.1" value="0.5">
+      <span><span id="maskBrushSizeValue">0.5</span> u</span>
+    </div>
+    <div class="mask-stats">
+      Límites: <span id="maskBoundsText">X: -10…10  Z: -10…10</span>
+      &nbsp;|&nbsp; Zoom: <span id="maskZoomLevel">100%</span>
+      &nbsp;|&nbsp; Bloqueadas: <span id="maskBlockedCount">0 celdas</span>
+    </div>
+    <div id="maskFileActions">
+      <button id="maskSave">💾 Guardar</button>
+      <button id="maskLoad">📂 Cargar</button>
+      <input type="file" id="maskLoadFile" accept=".json" style="display:none">
+      <button id="maskFitBounds">↔ Ajustar a escena</button>
+      <button id="maskResetView">🔍 Reset vista</button>
+    </div>
+  </div>
   <script type="importmap">
     {
         "imports": {
