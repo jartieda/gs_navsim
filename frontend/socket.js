@@ -68,6 +68,7 @@ export function setupSocket(
             robot.turnRight(Math.abs(msg.value));
           }
         } else if (msg.command === 'set_velocity') {
+          console.log(`Setting velocity: v=${msg.value[0]}, w=${msg.value[1]}`);
           const v = msg.value[0] || 0;
           const w = msg.value[1] || 0;
           if (Math.abs(v) > 0.01) {
@@ -80,6 +81,7 @@ export function setupSocket(
           }
         }
 
+
         if (cameraController) cameraController.update();
         renderer.render(scene, camera);
         if (onMovementCallback) onMovementCallback();
@@ -89,6 +91,19 @@ export function setupSocket(
       } else if (msg.type === 'capture_image') {
         console.log('Frontend: Received capture_image request');
         captureAndSendImage(socket, renderer);
+
+      } else if (msg.type === 'reset_robot') {
+        const x   = msg.x        ?? 0;
+        const y   = msg.y        ?? 0.3;
+        const z   = msg.z        ?? 0;
+        const rot = msg.rotation ?? 0;
+        robot.setPosition(x, y, z);
+        robot.setRotation(rot);
+        if (cameraController) cameraController.update();
+        renderer.render(scene, camera);
+        if (onMovementCallback) onMovementCallback();
+        setTimeout(() => captureAndSendImage(socket, renderer), 100);
+        console.log(`Robot reset to (${x}, ${y}, ${z}) rot=${rot}`);
       }
 
     } catch (error) {

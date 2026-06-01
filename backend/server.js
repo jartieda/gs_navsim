@@ -145,6 +145,18 @@ wss.on('connection', (ws, req) => {
         }));
         console.log(`Forwarded robot command: ${msg.command}`);
       }
+
+      // Handle reset_robot from robot client → forward to frontend (with optional pose)
+      if (msg.type === 'reset_robot' && frontendClient) {
+        frontendClient.send(JSON.stringify({
+          type: 'reset_robot',
+          x:        msg.x        ?? 0,
+          y:        msg.y        ?? 0.3,
+          z:        msg.z        ?? 0,
+          rotation: msg.rotation ?? 0,
+        }));
+        console.log('Forwarded reset_robot to frontend');
+      }
       
       // Handle rendered images from frontend → forward to robot client
       if (msg.type === 'rendered_image' && robotClient) {
