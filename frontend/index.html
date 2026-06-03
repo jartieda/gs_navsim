@@ -13,24 +13,36 @@
       z-index: 10; 
       background: rgba(0,0,0,0.8); 
       color: white;
-      padding: 15px; 
+      padding: 8px; 
       border-radius: 8px; 
-      min-width: 200px;
-      max-width: 30%;
-      font-size: 12px;
+      width: 210px;
+      font-size: 11px;
     }
     #controls button {
-      margin: 5px 0;
-      padding: 8px 12px;
+      margin: 0;
+      padding: 5px 6px;
       background: #4CAF50;
       color: white;
       border: none;
       border-radius: 4px;
       cursor: pointer;
-      width: 100%;
+      font-size: 11px;
     }
     #controls button:hover {
       background: #45a049;
+    }
+    .btn-row {
+      display: flex;
+      gap: 4px;
+      margin: 3px 0;
+    }
+    .btn-row button {
+      flex: 1;
+    }
+    .btn-full {
+      display: block;
+      width: 100%;
+      margin: 3px 0;
     }
     #resetRobot {
       background: #ff6b6b !important;
@@ -39,25 +51,33 @@
       background: #ff5252 !important;
     }
     #controls input[type="file"] {
-      margin: 5px 0;
-      padding: 5px;
+      margin: 3px 0;
+      padding: 3px;
       width: 100%;
+      font-size: 10px;
+      box-sizing: border-box;
     }
     #controls select {
-      margin: 5px 0;
-      padding: 5px;
+      margin: 2px 0;
+      padding: 3px;
       width: 100%;
       background: #333;
       color: white;
       border: 1px solid #555;
       border-radius: 4px;
+      font-size: 11px;
+    }
+    #controls label {
+      font-size: 10px;
+      display: block;
+      margin-top: 4px;
     }
     #info, #robotInfo, #helpInfo, #cameraInfo, #fpsInfo {
-      margin-top: 10px;
-      padding: 8px;
+      margin-top: 5px;
+      padding: 4px 6px;
       background: rgba(255,255,255,0.1);
       border-radius: 4px;
-      font-size: 11px;
+      font-size: 10px;
     }
     #robotInfo, #cameraInfo {
       font-family: monospace;
@@ -68,7 +88,7 @@
       border-left: 3px solid #4CAF50;
     }
     #helpInfo {
-      font-size: 10px;
+      font-size: 9px;
       opacity: 0.8;
     }
 
@@ -198,10 +218,14 @@
 <body>
   <div id="controls">
     <input type="file" id="plyLoader" accept=".ply" />
-    <button id="exportImage">Export Image</button>
-    <button id="saveToServer">Save to Server</button>
-    <button id="resetRobot">Reset Robot Position</button>
-    <button id="toggleMaskEditor" style="background:#5555cc;">🗺 Editor de Obstáculos</button>
+    <div class="btn-row">
+      <button id="exportImage">📷 Export</button>
+      <button id="saveToServer">💾 Save</button>
+    </div>
+    <div class="btn-row">
+      <button id="resetRobot">↺ Reset</button>
+      <button id="toggleMaskEditor" style="background:#5555cc;">🗺 Mask</button>
+    </div>
     <div>
       <label for="materialSelector">Render Mode:</label>
       <select id="materialSelector">
