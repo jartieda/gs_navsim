@@ -47,7 +47,7 @@ export function setupSocket(
             _showCollisionFlash();
             // Still render current view and send image so robot gets an observation
             renderer.render(scene, camera);
-            captureAndSendImage(socket, renderer);
+            captureAndSendImage(socket, renderer, robot);
             return; // skip movement application
           }
         }
@@ -86,11 +86,11 @@ export function setupSocket(
         renderer.render(scene, camera);
         if (onMovementCallback) onMovementCallback();
 
-        captureAndSendImage(socket, renderer);
+        captureAndSendImage(socket, renderer, robot);
 
       } else if (msg.type === 'capture_image') {
         console.log('Frontend: Received capture_image request');
-        captureAndSendImage(socket, renderer);
+        captureAndSendImage(socket, renderer, robot);
 
       } else if (msg.type === 'reset_robot') {
         const x   = msg.x        ?? 0;
@@ -102,7 +102,7 @@ export function setupSocket(
         if (cameraController) cameraController.update();
         renderer.render(scene, camera);
         if (onMovementCallback) onMovementCallback();
-        captureAndSendImage(socket, renderer);
+        captureAndSendImage(socket, renderer, robot);
         console.log(`Robot reset to (${x}, ${y}, ${z}) rot=${rot}`);
       }
 

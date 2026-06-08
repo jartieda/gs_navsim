@@ -1,5 +1,5 @@
 import * as THREE from 'three';
-import { setupScene, loadPLY, renderGaussianSplatting, renderObjectMode, renderEllipseMode, exportImage, saveImageToServer, updateObjectSorting } from './renderer.js';
+import { setupScene, loadPLY, renderGaussianSplatting, renderObjectMode, renderEllipseMode, exportImage, saveImageToServer, updateObjectSorting, disposePointCloud } from './renderer.js';
 import { setupSocket } from './socket.js';
 import { RobotController, CameraController, createRobotMarker, createGaussianMaterial } from './utils.js';
 import { KeyboardControls } from './controls.js';
@@ -17,6 +17,7 @@ document.addEventListener('DOMContentLoaded', () => {
   const pointScale = document.getElementById('pointScale');
   const chiScale = document.getElementById('chiScale');
   const fileInfo = document.getElementById('fileInfo');
+  const sceneSelector = document.getElementById('sceneSelector');
   
   // Robot position display elements
   const robotX = document.getElementById('robotX');
@@ -154,7 +155,9 @@ document.addEventListener('DOMContentLoaded', () => {
         fileInfo.textContent = `Loading ${file.name}...`;
         
         const pointCloud = await loadPLY(file);
-        currentPointCloud = pointCloud; // Store reference
+        // Dispose old point cloud GPU resources before replacing
+        disposePointCloud(currentPointCloud);
+        currentPointCloud = pointCloud;
         console.log('currentPointCloud set to loaded point cloud');
         const { center, distance } = renderGaussianSplatting(scene, currentPointCloud);
         console.log('Point cloud loaded and rendered');
@@ -176,13 +179,13 @@ document.addEventListener('DOMContentLoaded', () => {
 
         // Place robot at scene centre and let cameraController position the
         // camera — keeps them in sync without a manual reset.
-        robot.setPosition(center.x, center.y, center.z);
+        robot.setPosition(center.x, 0.50, center.z);
         robot.setRotation(0);
         controls.center.copy(center);
         controls.distance = distance;
         robot.updateRobotMarker(robotMarker);
         cameraController.update();
-        
+
         // Update displays
         updateDisplay();
 
@@ -339,5 +342,93 @@ document.addEventListener('DOMContentLoaded', () => {
         console.log('Chi scale changed to:', chi);
       }
     }
+  });
+
+  // ── Scene selector ─────────────────────────────────────────────────────────
+
+  async function loadSceneFromServer(sceneId) {
+    fileInfo.textContent = `Loading scene ${sceneId}...`;
+    try {
+      // Fetch PLY as a Blob and wrap in a File so loadPLY can use FileReader
+      const plyResp = await fetch(`/api/scenes/${encodeURIComponent(sceneId)}/ply`);
+      if (!plyResp.ok) throw new Error(`PLY not found for scene ${sceneId}`);
+      const plyBlob = await plyResp.blob();
+      const plyFile = new File([plyBlob], `${sceneId}.ply`, { type: 'application/octet-stream' });
+
+      const pointCloud = await loadPLY(plyFile);
+      // Dispose old point cloud GPU resources before replacing
+      disposePointCloud(currentPointCloud);
+      currentPointCloud = pointCloud;
+      const { center, distance } = renderGaussianSplatting(scene, currentPointCloud);
+
+      if (currentPointCloud.userData.type !== 'standard_ply') {
+        const loader = currentPointCloud.userData.loader;
+        const mode   = materialSelector.value;
+        const degree = parseInt(harmonicDegree.value);
+        const scale  = parseFloat(pointScale.value);
+        const chi    = parseFloat(chiScale.value);
+        if (mode === 'gaussian') {
+          currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
+        } else if (mode === 'points') {
+          currentPointCloud.material = loader.createSimplePointMaterial();
+        }
+      }
+
+      robot.setPosition(center.x, 0.50, center.z);
+      robot.setRotation(0);
+      controls.center.copy(center);
+      controls.distance = distance;
+      robot.updateRobotMarker(robotMarker);
+      cameraController.update();
+      updateDisplay();
+
+      const positions = pointCloud.geometry.attributes.position.array;
+      maskEditor.setScenePoints(positions);
+      maskEditor.setSceneId(sceneId);
+
+      // Load occupancy from occupancy.json + occupancy.png
+      const occResp = await fetch(`/api/scenes/${encodeURIComponent(sceneId)}/occupancy`);
+      if (occResp.ok) {
+        const occJson = await occResp.json();
+        const pngUrl  = `/api/scenes/${encodeURIComponent(sceneId)}/occupancy.png`;
+        await maskManager.fromOccupancyPNG(occJson, pngUrl);
+        console.log(`Occupancy loaded: ${maskManager.gridW}×${maskManager.gridH} cells, ${maskManager.blockedCount} blocked`);
+        maskEditor.resetView();
+        if (maskEditor.visible) maskEditor.render();
+      } else {
+        console.warn('No occupancy data found for scene', sceneId);
+      }
+
+      const userData = pointCloud.userData;
+      if (userData.type === 'standard_ply') {
+        fileInfo.textContent = `${sceneId} (Standard PLY) - ${pointCloud.geometry.attributes.position.count} points`;
+      } else {
+        fileInfo.textContent = `${sceneId} (Gaussian Splat) - ${userData.vertexCount} splats`;
+      }
+    } catch (err) {
+      console.error('Error loading scene:', err);
+      fileInfo.textContent = `Error loading scene: ${err.message}`;
+    }
+  }
+
+  // Populate scene dropdown on startup
+  fetch('/api/scenes')
+    .then(r => r.json())
+    .then(data => {
+      if (data.success && data.scenes.length > 0) {
+        data.scenes.forEach(s => {
+          const opt = document.createElement('option');
+          opt.value = s.id;
+          opt.textContent = s.id;
+          sceneSelector.appendChild(opt);
+        });
+      }
+    })
+    .catch(err => console.warn('Could not fetch scene list:', err));
+
+  document.getElementById('loadScene').addEventListener('click', () => {
+    const sceneId = sceneSelector.value;
+    if (!sceneId) return;
+    loadSceneFromServer(sceneId);
   });
 });

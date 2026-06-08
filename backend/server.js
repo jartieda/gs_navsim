@@ -11,6 +11,9 @@ const WS_PORT = 8081;
 const MASKS_DIR = path.join(__dirname, 'masks');
 if (!fs.existsSync(MASKS_DIR)) fs.mkdirSync(MASKS_DIR);
 
+// Directory containing scene data (occupancy + PLY files)
+const DATA_DIR = '/mnt/c/data';
+
 // Middleware
 app.use(express.json({ limit: '10mb' }));
 app.use(express.static(path.join(__dirname, '../frontend')));
@@ -83,6 +86,65 @@ app.get('/api/masks', (req, res) => {
   }
 });
 
+/**
+ * POST /api/save-mask-v2
+ * Body: { name: string, png: string (data-URL), occupancy: object }
+ *
+ * Saves <MASKS_DIR>/<name>/occupancy.png  +  occupancy.json.
+ * If those files already exist they are rotated to .bak1 / .bak2 … before
+ * writing the new version.
+ */
+app.post('/api/save-mask-v2', (req, res) => {
+  try {
+    const { name, png, occupancy } = req.body;
+    if (!name || typeof name !== 'string') {
+      return res.status(400).json({ success: false, error: 'name is required' });
+    }
+    const safeName = name.replace(/[^a-zA-Z0-9_\-]/g, '_').substring(0, 64);
+    if (!safeName) {
+      return res.status(400).json({ success: false, error: 'invalid name' });
+    }
+
+    const sceneDir = path.resolve(MASKS_DIR, safeName);
+    // Defence-in-depth: ensure the resolved path stays inside MASKS_DIR
+    if (!sceneDir.startsWith(path.resolve(MASKS_DIR) + path.sep)) {
+      return res.status(400).json({ success: false, error: 'invalid name' });
+    }
+
+    if (!fs.existsSync(sceneDir)) fs.mkdirSync(sceneDir, { recursive: true });
+
+    const pngPath  = path.join(sceneDir, 'occupancy.png');
+    const jsonPath = path.join(sceneDir, 'occupancy.json');
+
+    // If either file already exists, rotate existing files to the next .bakN slot
+    if (fs.existsSync(pngPath) || fs.existsSync(jsonPath)) {
+      let bakN = 1;
+      while (
+        fs.existsSync(`${pngPath}.bak${bakN}`) ||
+        fs.existsSync(`${jsonPath}.bak${bakN}`)
+      ) {
+        bakN++;
+      }
+      if (fs.existsSync(pngPath))  fs.renameSync(pngPath,  `${pngPath}.bak${bakN}`);
+      if (fs.existsSync(jsonPath)) fs.renameSync(jsonPath, `${jsonPath}.bak${bakN}`);
+      console.log(`Backed up existing mask '${safeName}' → .bak${bakN}`);
+    }
+
+    // Write PNG (strip data-URL prefix if present)
+    const pngData = png.replace(/^data:image\/png;base64,/, '');
+    fs.writeFileSync(pngPath, pngData, 'base64');
+
+    // Write occupancy.json
+    fs.writeFileSync(jsonPath, JSON.stringify(occupancy, null, 2), 'utf8');
+
+    console.log(`Saved mask v2: ${safeName}`);
+    res.json({ success: true, dir: safeName });
+  } catch (error) {
+    console.error('Error saving mask v2:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
 /** GET /api/masks/:name  → mask JSON */
 app.get('/api/masks/:name', (req, res) => {
   try {
@@ -100,6 +162,135 @@ app.get('/api/masks/:name', (req, res) => {
     res.json({ success: true, mask: data });
   } catch (error) {
     console.error('Error loading mask:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+// ── Scene data API (serves from DATA_DIR) ────────────────────────────────────
+
+/** GET /api/scenes → [{ id }] */
+app.get('/api/scenes', (req, res) => {
+  try {
+    if (!fs.existsSync(DATA_DIR)) {
+      return res.json({ success: true, scenes: [] });
+    }
+    const entries = fs.readdirSync(DATA_DIR, { withFileTypes: true })
+      .filter(d => d.isDirectory())
+      .map(d => ({ id: d.name }));
+    res.json({ success: true, scenes: entries });
+  } catch (error) {
+    console.error('Error listing scenes:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/** GET /api/scenes/:id/occupancy → occupancy.json metadata */
+app.get('/api/scenes/:id/occupancy', (req, res) => {
+  try {
+    const sceneId = req.params.id.replace(/[^a-zA-Z0-9_\-]/g, '');
+    const jsonPath = path.resolve(DATA_DIR, sceneId, 'occupancy.json');
+    if (!jsonPath.startsWith(path.resolve(DATA_DIR) + path.sep)) {
+      return res.status(400).json({ success: false, error: 'invalid scene id' });
+    }
+    if (!fs.existsSync(jsonPath)) {
+      return res.status(404).json({ success: false, error: 'occupancy.json not found' });
+    }
+    res.sendFile(jsonPath);
+  } catch (error) {
+    console.error('Error serving occupancy JSON:', error);
+    res.status(500).json({ success: false, error: error.message });
+  }
+});
+
+/** GET /api/scenes/:id/occupancy.png → occupancy PNG image */
+app.get('/api/scenes/:id/occupancy.png', (req, res) => {
+  try {
+    const sceneId = req.params.id.replace(/[^a-zA-Z0-9_\-]/g, '');
+    const pngPath = path.resolve(DATA_DIR, sceneId, 'occupancy.png');
+    if (!pngPath.startsWith(path.resolve(DATA_DIR) + path.sep)) {
+      return res.status(400).end();
+    }
+    if (!fs.existsSync(pngPath)) {
+      return res.status(404).end();
+    }
+    res.sendFile(pngPath);
+  } catch (error) {
+    console.error('Error serving occupancy PNG:', error);
+    res.status(500).end();
+  }
+});
+
+/** GET /api/scenes/:id/ply → 3DGS PLY file (compressed preferred) */
+app.get('/api/scenes/:id/ply', (req, res) => {
+  try {
+    const sceneId = req.params.id.replace(/[^a-zA-Z0-9_\-]/g, '');
+    const sceneDir = path.resolve(DATA_DIR, sceneId);
+    if (!sceneDir.startsWith(path.resolve(DATA_DIR) + path.sep)) {
+      return res.status(400).end();
+    }
+    const uncompressed = path.join(sceneDir, '3dgs_uncompressed.ply');
+    const compressed = path.join(sceneDir, '3dgs_compressed.ply');
+    const plyPath = fs.existsSync(uncompressed) ? uncompressed : compressed;
+    if (!fs.existsSync(plyPath)) {
+      return res.status(404).json({ success: false, error: 'PLY file not found' });
+    }
+    res.sendFile(plyPath);
+  } catch (error) {
+    console.error('Error serving PLY:', error);
+    res.status(500).end();
+  }
+});
+
+/**
+ * POST /api/scenes/:id/save-mask
+ * Body: { png: string (data-URL), occupancy: object }
+ *
+ * Overwrites occupancy.png + occupancy.json inside DATA_DIR/<id>/.
+ * Existing files are backed up to .bak1 / .bak2 … before writing.
+ */
+app.post('/api/scenes/:id/save-mask', (req, res) => {
+  try {
+    const sceneId = req.params.id.replace(/[^a-zA-Z0-9_\-]/g, '');
+    if (!sceneId) return res.status(400).json({ success: false, error: 'invalid scene id' });
+
+    const sceneDir = path.resolve(DATA_DIR, sceneId);
+    if (!sceneDir.startsWith(path.resolve(DATA_DIR) + path.sep)) {
+      return res.status(400).json({ success: false, error: 'invalid scene id' });
+    }
+    if (!fs.existsSync(sceneDir)) {
+      return res.status(404).json({ success: false, error: 'scene not found' });
+    }
+
+    const { png, occupancy } = req.body;
+    if (!png || !occupancy) {
+      return res.status(400).json({ success: false, error: 'png and occupancy are required' });
+    }
+
+    const pngPath  = path.join(sceneDir, 'occupancy.png');
+    const jsonPath = path.join(sceneDir, 'occupancy.json');
+
+    // Rotate existing files to the next free .bakN slot
+    let bakN = null;
+    if (fs.existsSync(pngPath) || fs.existsSync(jsonPath)) {
+      let n = 1;
+      while (
+        fs.existsSync(`${pngPath}.bak${n}`) ||
+        fs.existsSync(`${jsonPath}.bak${n}`)
+      ) { n++; }
+      if (fs.existsSync(pngPath))  fs.renameSync(pngPath,  `${pngPath}.bak${n}`);
+      if (fs.existsSync(jsonPath)) fs.renameSync(jsonPath, `${jsonPath}.bak${n}`);
+      bakN = n;
+      console.log(`Backed up mask for scene '${sceneId}' → .bak${n}`);
+    }
+
+    const pngData = png.replace(/^data:image\/png;base64,/, '');
+    fs.writeFileSync(pngPath, pngData, 'base64');
+    fs.writeFileSync(jsonPath, JSON.stringify(occupancy, null, 2), 'utf8');
+
+    console.log(`Saved mask for scene '${sceneId}'`);
+    res.json({ success: true, sceneId, bakN });
+  } catch (error) {
+    console.error('Error saving scene mask:', error);
     res.status(500).json({ success: false, error: error.message });
   }
 });

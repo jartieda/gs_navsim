@@ -136,6 +136,66 @@ export class MaskManager {
     this.data = new Uint8Array(json.data);
   }
 
+  /**
+   * Load occupancy from the occupancy.json + occupancy.png format used in
+   * /mnt/c/data/<scene>/.
+   *
+   * occupancy.json fields:
+   *   scale  – metres per pixel
+   *   min    – [minX, minY, minZ] world lower bound
+   *   max    – [maxX, maxY, maxZ] world upper bound
+   *
+   * The PNG is a grayscale image where dark pixels (< 128) are occupied.
+   * Row 0 of the image corresponds to maxZ (top of the map), so we flip
+   * vertically when filling the grid (row 0 → minZ side).
+   *
+   * @param {object} jsonData   Parsed occupancy.json object.
+   * @param {string} pngUrl     URL of the occupancy.png to fetch.
+   * @returns {Promise<void>}
+   */
+  async fromOccupancyPNG(jsonData, pngUrl) {
+    const scale = jsonData.scale;
+    const minX  = jsonData.min[0];
+    const maxX  = jsonData.max[0];
+    const minZ  = jsonData.min[1];   // ROS Y → simulator Z
+    const maxZ  = jsonData.max[1];
+
+    // Load image via a hidden canvas so we can read pixel data.
+    const img = await new Promise((resolve, reject) => {
+      const image = new Image();
+      image.onload = () => resolve(image);
+      image.onerror = reject;
+      image.src = pngUrl;
+    });
+
+    const w = img.width;
+    const h = img.height;
+
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width  = w;
+    offCanvas.height = h;
+    const ctx = offCanvas.getContext('2d');
+    ctx.drawImage(img, 0, 0);
+    const imageData = ctx.getImageData(0, 0, w, h);
+
+    this.resolution = scale;
+    this.bounds     = { minX, maxX, minZ, maxZ };
+    this.gridW      = w;
+    this.gridH      = h;
+    this.data       = new Uint8Array(w * h);
+
+    // PNG row 0 = top of map = maxZ; grid row 0 = minZ → flip vertically.
+    for (let row = 0; row < h; row++) {
+      //const imgRow = h - 1 - row;          // flipped row in PNG
+      const imgRow = row;                    // no flip 
+      for (let col = 0; col < w; col++) {
+        const pixelIdx  = (imgRow * w + col) * 4;
+        const r         = imageData.data[pixelIdx]; // grayscale value
+        this.data[row * w + col] = r < 128 ? 1 : 0;
+      }
+    }
+  }
+
   /** How many cells are marked as blocked. */
   get blockedCount() {
     let n = 0;

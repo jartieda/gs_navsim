@@ -44,30 +44,48 @@ export class GaussianSplatLoader {
   }
 
   parseHeader(buffer) {
-    const text = new TextDecoder().decode(buffer);
+    // Find the exact byte offset of the end of the header by searching the raw
+    // bytes for "end_header" followed by a newline.  This correctly handles
+    // both LF and CRLF line endings and avoids any re-encoding mismatch.
+    const MARKER = 'end_header';
+    const raw = new Uint8Array(buffer);
+    let headerLength = -1;
+    for (let i = 0; i <= raw.length - MARKER.length; i++) {
+      let match = true;
+      for (let j = 0; j < MARKER.length; j++) {
+        if (raw[i + j] !== MARKER.charCodeAt(j)) { match = false; break; }
+      }
+      if (match) {
+        // Skip past the marker and the following newline (LF or CRLF)
+        let end = i + MARKER.length;
+        if (raw[end] === 0x0D) end++; // CR
+        if (raw[end] === 0x0A) end++; // LF
+        headerLength = end;
+        break;
+      }
+    }
+
+    const text = new TextDecoder().decode(buffer.slice(0, headerLength > 0 ? headerLength : 4096));
     const lines = text.split('\n');
-    
+
     const header = {
       format: 'ascii',
       vertexCount: 0,
       properties: [],
-      headerLength: 0
+      headerLength: headerLength > 0 ? headerLength : 0
     };
-    
+
     let inHeader = false;
-    let headerText = '';
-    
+
     for (let i = 0; i < lines.length; i++) {
       const line = lines[i].trim();
-      headerText += line + '\n';
-      
+
       if (line === 'ply') {
         inHeader = true;
         continue;
       }
-      
+
       if (line === 'end_header') {
-        header.headerLength = new TextEncoder().encode(headerText).length;
         break;
       }
       

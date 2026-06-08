@@ -1,11 +1,20 @@
 // renderer.js
 // Handles Three.js scene setup, PLY loading, Gaussian splatting, and image export
 import * as THREE from 'three';
+import { PLYLoader } from 'three/addons/loaders/PLYLoader.js';
 
 import { createGaussianMaterial, generateRandomColors, centerGeometry } from './utils.js';
 import { GaussianSplatLoader } from './gaussian-splat-loader.js';
 
 let currentPointCloud = null;
+
+// Cached ellipse texture — created once, reused across scene loads
+let _ellipseTexture = null;
+function getEllipseTexture() {
+  if (_ellipseTexture) return _ellipseTexture;
+  _ellipseTexture = createEllipseTexture();
+  return _ellipseTexture;
+}
 
 // Camera state tracking to avoid sorting every frame
 let _lastSortCamPos = new THREE.Vector3(Infinity, Infinity, Infinity);
@@ -128,14 +137,53 @@ function createAxisGizmo() {
 }
 
 function clearExistingRenderObjects(scene) {
-  // Clear existing point clouds
+  // Remove raw point clouds from scene (do NOT dispose — they are the source data
+  // reused across render modes; caller is responsible for disposing when done).
   const existingPoints = scene.children.filter(child => child.type === 'Points');
   existingPoints.forEach(points => scene.remove(points));
-  
-  // Clear existing object mode meshes (all types)
-  const existingObjects = scene.children.filter(child => child.userData && 
+
+  // Remove and DISPOSE derived render objects (object_mode / ellipse_mode groups).
+  // These are rebuilt from the source point cloud on every mode switch, so it is
+  // safe — and necessary — to free their GPU resources here.
+  const existingObjects = scene.children.filter(child => child.userData &&
     (child.userData.type === 'object_mode' || child.userData.type === 'ellipse_mode'));
-  existingObjects.forEach(obj => scene.remove(obj));
+  existingObjects.forEach(obj => {
+    scene.remove(obj);
+    _disposeObject(obj);
+  });
+}
+
+/**
+ * Recursively dispose all GPU resources (geometry, materials, textures) held
+ * by an Object3D and all its descendants.
+ */
+function _disposeObject(obj) {
+  obj.traverse(child => {
+    if (child.geometry) {
+      child.geometry.dispose();
+    }
+    if (child.material) {
+      const mats = Array.isArray(child.material) ? child.material : [child.material];
+      mats.forEach(mat => {
+        const texProps = [
+          'map', 'lightMap', 'bumpMap', 'normalMap', 'displacementMap',
+          'roughnessMap', 'metalnessMap', 'alphaMap', 'aoMap', 'emissiveMap',
+          'specularMap', 'envMap', 'gradientMap', 'matcap',
+        ];
+        texProps.forEach(prop => { if (mat[prop]) mat[prop].dispose(); });
+        mat.dispose();
+      });
+    }
+  });
+}
+
+/**
+ * Dispose all GPU resources owned by a source point cloud object (geometry +
+ * material).  Call this BEFORE replacing currentPointCloud with a new scene.
+ */
+export function disposePointCloud(pointCloud) {
+  if (!pointCloud) return;
+  _disposeObject(pointCloud);
 }
 
 export async function loadPLY(file) {
@@ -154,7 +202,7 @@ export async function loadPLY(file) {
     
     // Fallback to standard PLY loading
     return new Promise((resolve, reject) => {
-      const loader = new THREE.PLYLoader();
+      const loader = new PLYLoader();
       const reader = new FileReader();
       
       reader.onload = function(e) {
@@ -455,7 +503,7 @@ function renderEllipseModeInstanced(scene, positions, scales, rotations, colors,
     transparent: true,
     opacity: 0.8,
     vertexColors: !!colors,
-    map: createEllipseTexture(),
+    map: getEllipseTexture(),
     alphaTest: 0.01,
     blending: THREE.NormalBlending, // Changed from AdditiveBlending to fix white rendering
     depthWrite: false

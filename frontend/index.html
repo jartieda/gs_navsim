@@ -196,6 +196,81 @@
       display: flex;
       gap: 5px;
     }
+    /* ── Grid params collapsible form ─────────────────────────────────── */
+    .mask-params-details {
+      border: 1px solid rgba(255,255,255,0.13);
+      border-radius: 4px;
+      padding: 4px 8px 6px;
+      font-size: 11px;
+    }
+    .mask-params-details > summary {
+      cursor: pointer;
+      padding: 2px 0;
+      color: #bbb;
+      list-style: none;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .mask-params-details > summary:hover { color: #fff; }
+    .mask-params-details > summary::before {
+      content: '▶';
+      font-size: 9px;
+      transition: transform 0.15s;
+      display: inline-block;
+    }
+    .mask-params-details[open] > summary::before { transform: rotate(90deg); }
+    .mask-params-grid {
+      display: grid;
+      grid-template-columns: 1fr 1fr;
+      gap: 5px 10px;
+      margin: 8px 0 6px;
+      align-items: center;
+    }
+    .mask-params-grid label {
+      font-size: 10px;
+      color: #aaa;
+      white-space: nowrap;
+    }
+    .mask-params-grid input[type="number"] {
+      width: 100%;
+      background: rgba(255,255,255,0.07);
+      border: 1px solid rgba(255,255,255,0.2);
+      border-radius: 3px;
+      color: #eee;
+      padding: 3px 6px;
+      font-size: 11px;
+      box-sizing: border-box;
+    }
+    .mask-params-grid input[type="number"]:focus {
+      outline: none;
+      border-color: rgba(100,180,255,0.65);
+      background: rgba(100,180,255,0.08);
+    }
+    .mask-apply-btn {
+      width: 100%;
+      padding: 5px;
+      background: rgba(70,130,220,0.28);
+      border: 1px solid rgba(100,160,255,0.45);
+      border-radius: 4px;
+      color: #b8d8ff;
+      cursor: pointer;
+      font-size: 11px;
+      transition: background 0.15s;
+    }
+    .mask-apply-btn:hover { background: rgba(70,130,220,0.5); }
+    .mask-param-computed {
+      color: #7ec8e3;
+      font-family: monospace;
+      font-size: 11px;
+      padding: 3px 6px;
+      background: rgba(255,255,255,0.04);
+      border-radius: 3px;
+      border: 1px solid rgba(255,255,255,0.1);
+      display: block;
+    }
+    .mask-param-computed-lbl { color: #666 !important; }
+
     /* collision flash overlay */
     #maskCollisionIndicator {
       position: absolute;
@@ -217,6 +292,13 @@
 </head>
 <body>
   <div id="controls">
+    <div>
+      <label for="sceneSelector">Scene:</label>
+      <select id="sceneSelector">
+        <option value="">-- Select scene --</option>
+      </select>
+      <button id="loadScene" class="btn-full" style="background:#2277cc;">⬇ Load Scene</button>
+    </div>
     <input type="file" id="plyLoader" accept=".ply" />
     <div class="btn-row">
       <button id="exportImage">📷 Export</button>
@@ -315,6 +397,27 @@
       &nbsp;|&nbsp; Zoom: <span id="maskZoomLevel">100%</span>
       &nbsp;|&nbsp; Bloqueadas: <span id="maskBlockedCount">0 celdas</span>
     </div>
+    <!-- Collapsible grid parameters form -->
+    <details id="maskGridParams" class="mask-params-details">
+      <summary>⚙ Parámetros del occupancy grid</summary>
+      <div class="mask-params-grid">
+        <label>Resolución (m/cel):</label>
+        <input type="number" id="maskParamScale" step="0.05" min="0.05" max="5.0" value="0.2">
+        <label>Min X (origen):</label>
+        <input type="number" id="maskParamMinX" step="1" value="-10">
+        <label>Max Z (origen):</label>
+        <input type="number" id="maskParamMaxZ" step="1" value="10">
+        <label>Columnas:</label>
+        <input type="number" id="maskParamCols" step="1" min="1" value="100">
+        <label>Filas:</label>
+        <input type="number" id="maskParamRows" step="1" min="1" value="100">
+        <label class="mask-param-computed-lbl">Max X (calc.):</label>
+        <span id="maskParamMaxXDisplay" class="mask-param-computed">10.00</span>
+        <label class="mask-param-computed-lbl">Min Z (calc.):</label>
+        <span id="maskParamMinZDisplay" class="mask-param-computed">-10.00</span>
+      </div>
+      <button id="maskApplyParams" class="mask-apply-btn">✔ Aplicar (reconstruye grid)</button>
+    </details>
     <div id="maskFileActions">
       <button id="maskSave">💾 Guardar</button>
       <button id="maskLoad">📂 Cargar</button>

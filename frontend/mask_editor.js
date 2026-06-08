@@ -31,6 +31,8 @@ export class MaskEditor {
     this.paintBlocked = true;   // true = block, false = clear
     this.brushRadius = 0.5;     // world units
     this.scenePoints = null;    // Float32Array [x,y,z, x,y,z, …] — PLY positions
+    this.sceneBounds = null;    // {minX, maxX, minZ, maxZ} — PLY XZ extent for viewport
+    this.sceneId = null;        // active scene id (from server), used when saving
 
     // Zoom & viewport state
     this.zoom = 1.0;          // 1 = full bounds visible; >1 = zoomed in
@@ -91,6 +93,12 @@ export class MaskEditor {
       this._resetView();
       this.render();
     });
+
+    // Grid params (live preview on input, rebuild on button click)
+    ['maskParamScale', 'maskParamMinX', 'maskParamMaxZ', 'maskParamCols', 'maskParamRows']
+      .forEach(id => document.getElementById(id)
+        .addEventListener('input', () => this._applyParamPreview()));
+    document.getElementById('maskApplyParams').addEventListener('click', () => this._applyParamsFinal());
   }
 
   _bindCanvasEvents() {
@@ -124,7 +132,7 @@ export class MaskEditor {
       this._lastMousePy = e.clientY - rect.top;
 
       if (this._panning && this._panAnchor) {
-        const b = this.mask.bounds;
+        const b = this._getViewBounds();
         const visSpanX = (b.maxX - b.minX) / this.zoom;
         const visSpanZ = (b.maxZ - b.minZ) / this.zoom;
         const dx = (this._lastMousePx - this._panAnchor.mx) / c.width  * visSpanX;
@@ -181,7 +189,7 @@ export class MaskEditor {
         const factor = e.deltaY > 0 ? 0.8 : 1.25;
         this.zoom = Math.max(0.25, Math.min(16, this.zoom * factor));
         // Recompute viewCenter so the world point under cursor stays fixed
-        const b = this.mask.bounds;
+        const b = this._getViewBounds();
         const visSpanX = (b.maxX - b.minX) / this.zoom;
         const visSpanZ = (b.maxZ - b.minZ) / this.zoom;
         this.viewCX = wx - (mx / c.width  - 0.5) * visSpanX;
@@ -208,7 +216,7 @@ export class MaskEditor {
   // ── Coordinate conversion ──────────────────────────────────────────────────
 
   _canvasToWorld(px, py) {
-    const b = this.mask.bounds;
+    const b = this._getViewBounds();
     const visSpanX = (b.maxX - b.minX) / this.zoom;
     const visSpanZ = (b.maxZ - b.minZ) / this.zoom;
     return {
@@ -218,7 +226,7 @@ export class MaskEditor {
   }
 
   _worldToCanvas(wx, wz) {
-    const b = this.mask.bounds;
+    const b = this._getViewBounds();
     const visSpanX = (b.maxX - b.minX) / this.zoom;
     const visSpanZ = (b.maxZ - b.minZ) / this.zoom;
     return {
@@ -227,46 +235,45 @@ export class MaskEditor {
     };
   }
 
+  /** Returns the bounds used for viewport/coordinate calculations — scene PLY extent if available, else mask bounds. */
+  _getViewBounds() {
+    return this.sceneBounds; // ?? this.mask.bounds;
+  }
+
   // ── Scene point cloud ──────────────────────────────────────────────────────
 
   /**
    * Provide the 3D point positions of the loaded PLY (Float32Array [x,y,z,…]).
    * They will be projected top-down (XZ) in the editor background.
+   * Also computes and stores sceneBounds for use as the viewport extent.
    */
   setScenePoints(positions) {
     this.scenePoints = positions;
+    if (positions && positions.length >= 3) {
+      let minX = Infinity, maxX = -Infinity;
+      let minZ = Infinity, maxZ = -Infinity;
+      for (let i = 0; i < positions.length; i += 3) {
+        if (positions[i]     < minX) minX = positions[i];
+        if (positions[i]     > maxX) maxX = positions[i];
+        if (positions[i + 2] < minZ) minZ = positions[i + 2];
+        if (positions[i + 2] > maxZ) maxZ = positions[i + 2];
+      }
+      const padX = Math.max(0.5, (maxX - minX) * 0.05);
+      const padZ = Math.max(0.5, (maxZ - minZ) * 0.05);
+      this.sceneBounds = { minX: minX - padX, maxX: maxX + padX, minZ: minZ - padZ, maxZ: maxZ + padZ };
+    } else {
+      this.sceneBounds = null;
+    }
   }
 
   /**
-   * Fit mask bounds to the loaded scene geometry + 10 % padding.
-   * Rebuilds (and clears) the grid.
+   * Fit the viewport to the scene PLY extent (sceneBounds).
+   * Does NOT modify mask bounds or grid data.
    */
   _fitBoundsToScene() {
-    const pts = this.scenePoints;
-    if (!pts || pts.length < 3) return;
-
-    let minX = Infinity, maxX = -Infinity;
-    let minZ = Infinity, maxZ = -Infinity;
-
-    for (let i = 0; i < pts.length; i += 3) {
-      if (pts[i]     < minX) minX = pts[i];
-      if (pts[i]     > maxX) maxX = pts[i];
-      if (pts[i + 2] < minZ) minZ = pts[i + 2];
-      if (pts[i + 2] > maxZ) maxZ = pts[i + 2];
-    }
-    const padX = Math.max(0.5, (maxX - minX) * 0.1);
-    const padZ = Math.max(0.5, (maxZ - minZ) * 0.1);
-
-    this.mask.setBounds({
-      minX: minX - padX,
-      maxX: maxX + padX,
-      minZ: minZ - padZ,
-      maxZ: maxZ + padZ,
-    });
-    this._updateBoundsText();
+    if (!this.sceneBounds) return;
     this._resetView();
     this.render();
-    this._updateStats();
   }
 
   // ── Rendering ──────────────────────────────────────────────────────────────
@@ -275,9 +282,10 @@ export class MaskEditor {
     const ctx = this.ctx;
     const W = this.canvas.width;
     const H = this.canvas.height;
-    const b = this.mask.bounds;
-    const visSpanX = (b.maxX - b.minX) / this.zoom;
-    const visSpanZ = (b.maxZ - b.minZ) / this.zoom;
+    const vb = this._getViewBounds();  // viewport extent (scene PLY bounds or mask bounds)
+    const b  = this.mask.bounds;       // mask grid bounds (for cell indexing)
+    const visSpanX = (vb.maxX - vb.minX) / this.zoom;
+    const visSpanZ = (vb.maxZ - vb.minZ) / this.zoom;
     const viewMinX = this.viewCX - visSpanX / 2;
     const viewMaxX = this.viewCX + visSpanX / 2;
     const viewMinZ = this.viewCZ - visSpanZ / 2;
@@ -292,22 +300,32 @@ export class MaskEditor {
 
     // — Blocked cells (only those visible in the current viewport) —
     const res = this.mask.resolution;
-    const colMin = Math.max(0, Math.floor((viewMinX - b.minX) / res));
-    const colMax = Math.min(this.mask.gridW - 1, Math.ceil((viewMaxX - b.minX) / res));
-    const rowMin = Math.max(0, Math.floor((viewMinZ - b.minZ) / res));
-    const rowMax = Math.min(this.mask.gridH - 1, Math.ceil((viewMaxZ - b.minZ) / res));
+    const colMax = this.mask.gridW - 1;
+    const rowMax = this.mask.gridH - 1;
     const cellPxW = (res / visSpanX) * W;
     const cellPxH = (res / visSpanZ) * H;
-
     ctx.fillStyle = 'rgba(220, 50, 50, 0.72)';
-    for (let row = rowMin; row <= rowMax; row++) {
-      for (let col = colMin; col <= colMax; col++) {
+    for (let row = 0; row <= rowMax; row++) {
+      for (let col = 0; col <= colMax; col++) {
         if (this.mask.data[row * this.mask.gridW + col]) {
-          const { px, py } = this._worldToCanvas(b.minX + col * res, b.minZ + row * res);
+          // mask to world 
+          //const res2 = (b.maxX - b.minX) / this.mask.gridW;
+          const wx = b.minX + col * res;
+          const wz = b.maxZ - row * res;
+          const { px, py } = this._worldToCanvas(wx, wz);
           ctx.fillRect(Math.floor(px), Math.floor(py), Math.ceil(cellPxW) + 1, Math.ceil(cellPxH) + 1);
         }
       }
     }
+
+    // — Mask bounds rectangle (dashed yellow outline) —
+    const { px: mbMinPx, py: mbMaxPy } = this._worldToCanvas(b.minX, b.minZ);
+    const { px: mbMaxPx, py: mbMinPy } = this._worldToCanvas(b.maxX, b.maxZ);
+    ctx.strokeStyle = 'rgba(255, 200, 0, 0.75)';
+    ctx.lineWidth = 1.5;
+    ctx.setLineDash([6, 3]);
+    ctx.strokeRect(Math.round(mbMinPx), Math.round(mbMinPy), Math.round(mbMaxPx - mbMinPx), Math.round(mbMaxPy - mbMinPy));
+    ctx.setLineDash([]);
 
     // — Unit grid lines (only those in the visible range) —
     ctx.strokeStyle = 'rgba(255,255,255,0.12)';
@@ -374,9 +392,15 @@ export class MaskEditor {
     }
   }
 
+  /** Update the active scene id so saves go to the right directory. */
+  setSceneId(id) {
+    this.sceneId = id || null;
+  }
+
   /** Reset viewport to show the full mask bounds at zoom 1. */
+  resetView() { this._resetView(); }
   _resetView() {
-    const b = this.mask.bounds;
+    const b = this._getViewBounds();
     this.viewCX = (b.minX + b.maxX) / 2;
     this.viewCZ = (b.minZ + b.maxZ) / 2;
     this.zoom = 1.0;
@@ -385,7 +409,7 @@ export class MaskEditor {
 
   /** Prevent panning beyond the outer mask bounds. */
   _clampView() {
-    const b = this.mask.bounds;
+    const b = this._getViewBounds();
     const visSpanX = (b.maxX - b.minX) / this.zoom;
     const visSpanZ = (b.maxZ - b.minZ) / this.zoom;
     this.viewCX = Math.max(b.minX + visSpanX / 2, Math.min(b.maxX - visSpanX / 2, this.viewCX));
@@ -397,6 +421,7 @@ export class MaskEditor {
   show() {
     this.visible = true;
     this.panel.style.display = 'flex';
+    this._syncParamForm();
     this.render();
     this._updateStats();
   }
@@ -436,24 +461,141 @@ export class MaskEditor {
     if (el) el.textContent = `${this.mask.blockedCount} celdas`;
   }
 
+  // ── Grid params ────────────────────────────────────────────────────────────
+
+  /** Sync form inputs to current mask.bounds / mask.resolution. */
+  _syncParamForm() {
+    const { resolution: scale, bounds: b, gridW, gridH } = this.mask;
+    document.getElementById('maskParamScale').value = scale;
+    document.getElementById('maskParamMinX').value  = b.minX;
+    document.getElementById('maskParamMaxZ').value  = b.maxZ;
+    document.getElementById('maskParamCols').value  = gridW;
+    document.getElementById('maskParamRows').value  = gridH;
+    this._updateParamComputed(b.minX, b.maxZ, scale, gridW, gridH);
+  }
+
+  /** Update the readonly maxX / minZ computed displays. */
+  _updateParamComputed(minX, maxZ, scale, cols, rows) {
+    const maxX = minX + cols * scale;
+    const minZ = maxZ - rows * scale;
+    document.getElementById('maskParamMaxXDisplay').textContent = maxX.toFixed(3);
+    document.getElementById('maskParamMinZDisplay').textContent = minZ.toFixed(3);
+  }
+
+  /**
+   * Live preview: mutate mask.bounds and mask.resolution WITHOUT rebuilding
+   * the grid.  The existing cells stay in the Uint8Array but their visual
+   * world positions stretch/shift to match the new bounds — good enough as a
+   * preview before the user hits "Aplicar".
+   */
+  _applyParamPreview() {
+    const scale = parseFloat(document.getElementById('maskParamScale').value);
+    const minX  = parseFloat(document.getElementById('maskParamMinX').value);
+    const maxZ  = parseFloat(document.getElementById('maskParamMaxZ').value);
+    const cols  = parseInt(document.getElementById('maskParamCols').value, 10);
+    const rows  = parseInt(document.getElementById('maskParamRows').value, 10);
+    if ([scale, minX, maxZ, cols, rows].some(v => isNaN(v))) return;
+    if (scale <= 0 || cols < 1 || rows < 1) return;
+    const maxX = minX + cols * scale;
+    const minZ = maxZ - rows * scale;
+    this._updateParamComputed(minX, maxZ, scale, cols, rows);
+    // Direct mutation — no grid rebuild
+    this.mask.bounds.minX = minX;
+    this.mask.bounds.maxX = maxX;
+    this.mask.bounds.minZ = minZ;
+    this.mask.bounds.maxZ = maxZ;
+    this.mask.resolution  = scale;
+    this._updateBoundsText();
+    this._clampView();
+    if (this.visible) this.render();
+  }
+
+  /**
+   * Fully apply new params: rebuilds the grid (clears mask data).
+   * Asks for confirmation if there is existing mask data.
+   */
+  _applyParamsFinal() {
+    const scale = parseFloat(document.getElementById('maskParamScale').value);
+    const minX  = parseFloat(document.getElementById('maskParamMinX').value);
+    const maxZ  = parseFloat(document.getElementById('maskParamMaxZ').value);
+    const cols  = parseInt(document.getElementById('maskParamCols').value, 10);
+    const rows  = parseInt(document.getElementById('maskParamRows').value, 10);
+    if ([scale, minX, maxZ, cols, rows].some(v => isNaN(v))) return;
+    if (scale <= 0) { alert('La resolución debe ser mayor que 0.'); return; }
+    if (cols < 1 || rows < 1) { alert('Las columnas y filas deben ser ≥ 1.'); return; }
+    const maxX = minX + cols * scale;
+    const minZ = maxZ - rows * scale;
+    this._updateParamComputed(minX, maxZ, scale, cols, rows);
+    if (this.mask.blockedCount > 0 &&
+        !confirm('Aplicar nuevos parámetros reconstruirá el grid y borrará la máscara actual. ¿Continuar?')) return;
+    this.mask.resolution = scale;
+    this.mask.setBounds({ minX, maxX, minZ, maxZ }); // calls _buildGrid → clears data
+    this._updateBoundsText();
+    this._resetView();
+    this.render();
+    this._updateStats();
+  }
+
   // ── Save / Load ────────────────────────────────────────────────────────────
 
   async _saveMask() {
-    const rawName = prompt('Nombre del escenario:', 'escenario_1');
-    if (!rawName) return;
-    const name = rawName.trim();
-    if (!name) return;
+    // ── Render mask to PNG ──────────────────────────────────────────────────
+    const offCanvas = document.createElement('canvas');
+    offCanvas.width  = this.mask.gridW;
+    offCanvas.height = this.mask.gridH;
+    const octx    = offCanvas.getContext('2d');
+    const imgData = octx.createImageData(this.mask.gridW, this.mask.gridH);
+    for (let i = 0; i < this.mask.data.length; i++) {
+      const v = this.mask.data[i] === 1 ? 0 : 255; // blocked → black, free → white
+      imgData.data[i * 4 + 0] = v;
+      imgData.data[i * 4 + 1] = v;
+      imgData.data[i * 4 + 2] = v;
+      imgData.data[i * 4 + 3] = 255;
+    }
+    octx.putImageData(imgData, 0, 0);
+    const pngDataUrl = offCanvas.toDataURL('image/png');
 
-    const json = JSON.stringify(this.mask.toJSON(), null, 2);
-    const blob = new Blob([json], { type: 'application/json' });
-    const url  = URL.createObjectURL(blob);
-    const a    = document.createElement('a');
-    a.href     = url;
-    a.download = name.endsWith('.json') ? name : `${name}.json`;
-    document.body.appendChild(a);
-    a.click();
-    document.body.removeChild(a);
-    URL.revokeObjectURL(url);
+    // ── Build occupancy.json metadata ───────────────────────────────────────
+    const occupancy = {
+      scale: this.mask.resolution,
+      min:   [this.mask.bounds.minX, this.mask.bounds.minZ],
+      max:   [this.mask.bounds.maxX, this.mask.bounds.maxZ],
+    };
+
+    // ── POST to server ──────────────────────────────────────────────────────
+    try {
+      let url, body, successMsg;
+      if (this.sceneId) {
+        // Save directly into the scene's data directory
+        url = `/api/scenes/${encodeURIComponent(this.sceneId)}/save-mask`;
+        body = JSON.stringify({ png: pngDataUrl, occupancy });
+        successMsg = (r) => `Máscara guardada en la escena '${this.sceneId}'` +
+                            (r.bakN ? ` (backup .bak${r.bakN})` : '');
+      } else {
+        // No scene loaded — ask for a name and save to the masks folder
+        const rawName = prompt('Nombre del escenario:', 'escenario_1');
+        if (!rawName) return;
+        const name = rawName.trim();
+        if (!name) return;
+        url = '/api/save-mask-v2';
+        body = JSON.stringify({ name, png: pngDataUrl, occupancy });
+        successMsg = (r) => `Máscara guardada en masks/${r.dir}/`;
+      }
+
+      const resp = await fetch(url, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body,
+      });
+      const result = await resp.json();
+      if (result.success) {
+        alert(successMsg(result));
+      } else {
+        alert(`Error al guardar: ${result.error}`);
+      }
+    } catch (err) {
+      alert(`Error al guardar: ${err.message}`);
+    }
   }
 
   _loadFromFile(e) {
@@ -464,6 +606,7 @@ export class MaskEditor {
       try {
         const json = JSON.parse(ev.target.result);
         this.mask.fromJSON(json);
+        this._syncParamForm();
         this._updateBoundsText();
         this._resetView();
         this.render();
