@@ -94,7 +94,7 @@ export function setupSocket(
 
       } else if (msg.type === 'reset_robot') {
         const x   = msg.x        ?? 0;
-        const y   = msg.y        ?? 0.3;
+        const y   = msg.y        ?? 0.50;
         const z   = msg.z        ?? 0;
         const rot = msg.rotation ?? 0;
         robot.setPosition(x, y, z);
@@ -104,6 +104,30 @@ export function setupSocket(
         if (onMovementCallback) onMovementCallback();
         captureAndSendImage(socket, renderer, robot);
         console.log(`Robot reset to (${x}, ${y}, ${z}) rot=${rot}`);
+
+      } else if (msg.type === 'reset_robot_random') {
+        // The simulator picks a random collision-free spawn using the loaded mask.
+        const y           = msg.y           ?? 0.50;
+        const robotRadius = msg.robot_radius ?? 0.35;
+        let x, z, rot;
+        if (maskManager && maskManager.blockedCount > 0) {
+          const pos = maskManager.randomFreePosition(robotRadius);
+          x   = pos.x;
+          z   = pos.z;
+        } else {
+          x = 0;
+          z = 0;
+        }
+        rot = Math.random() * 2 * Math.PI;
+        robot.setPosition(x, y, z);
+        robot.setRotation(rot);
+        if (cameraController) cameraController.update();
+        renderer.render(scene, camera);
+        if (onMovementCallback) onMovementCallback();
+        // Send pose back to robot client so it can initialise dead-reckoning
+        socket.send(JSON.stringify({ type: 'robot_pose', x, y, z, rotation: rot }));
+        captureAndSendImage(socket, renderer, robot);
+        console.log(`Random reset to (${x.toFixed(2)}, ${z.toFixed(2)}) rot=${rot.toFixed(2)}`);
       }
 
     } catch (error) {

@@ -4,7 +4,7 @@
 import { updateObjectSorting } from './renderer.js';
 
 export class KeyboardControls {
-  constructor(robot, camera, renderer, scene, onMovementCallback = null) {
+  constructor(robot, camera, renderer, scene, onMovementCallback = null, maskManager = null) {
     this.robot = robot;
     this.camera = camera;
     this.renderer = renderer;
@@ -12,6 +12,7 @@ export class KeyboardControls {
     this.keys = new Set();
     this.isEnabled = true;
     this.onMovementCallback = onMovementCallback;
+    this.maskManager = maskManager;
     
     this.bindEvents();
   }
@@ -39,15 +40,29 @@ export class KeyboardControls {
     this.keys.delete(e.code);
   }
 
+  /** Check projected position against mask; show flash and return true if blocked. */
+  _checkCollision(command) {
+    if (!this.maskManager) return false;
+    const projected = this.robot.getProjectedPosition(command, null);
+    // mask stores z in mask-space (z_mask = -z_threejs)
+    if (this.maskManager.isBlockedCircle(projected.x, -projected.z, 0.3)) {
+      _showCollisionFlash();
+      return true;
+    }
+    return false;
+  }
+
   handleMovement() {
     let moved = false;
     
     if (this.keys.has('ArrowUp') || this.keys.has('KeyW')) {
+      this._checkCollision('forward');
       this.robot.moveForward();
       moved = true;
     }
     
     if (this.keys.has('ArrowDown') || this.keys.has('KeyS')) {
+      this._checkCollision('backward');
       this.robot.moveBackward();
       moved = true;
     }
@@ -88,4 +103,12 @@ export class KeyboardControls {
     window.removeEventListener('keyup', this.onKeyUp);
     window.removeEventListener('blur', () => this.keys.clear());
   }
+}
+
+function _showCollisionFlash() {
+  const el = document.getElementById('maskCollisionIndicator');
+  if (!el) return;
+  el.style.display = 'block';
+  clearTimeout(el._flashTimer);
+  el._flashTimer = setTimeout(() => { el.style.display = 'none'; }, 600);
 }

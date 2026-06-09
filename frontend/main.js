@@ -79,7 +79,7 @@ document.addEventListener('DOMContentLoaded', () => {
   }
   
   // Setup controls
-  const keyboardControls = new KeyboardControls(robot, cameraController, renderer, scene, updateDisplay);
+  const keyboardControls = new KeyboardControls(robot, cameraController, renderer, scene, updateDisplay, maskManager);
   
   // Main render loop with FPS monitoring
   function animate() {

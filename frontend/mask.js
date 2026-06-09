@@ -35,14 +35,14 @@ export class MaskManager {
 
   worldToCell(x, z) {
     const col = Math.floor((x - this.bounds.minX) / this.resolution);
-    const row = Math.floor((z - this.bounds.minZ) / this.resolution);
+    const row = Math.floor((this.bounds.maxZ - z) / this.resolution); // row 0 = maxZ (matches PNG + display)
     return { col, row };
   }
 
   cellToWorldCenter(col, row) {
     return {
       x: this.bounds.minX + (col + 0.5) * this.resolution,
-      z: this.bounds.minZ + (row + 0.5) * this.resolution,
+      z: this.bounds.maxZ - (row + 0.5) * this.resolution, // row 0 = maxZ
     };
   }
 
@@ -66,6 +66,9 @@ export class MaskManager {
 
   /** True if the point (x, z) falls in a blocked cell. */
   isBlocked(x, z) {
+    // Outside mask bounds → free space (not an obstacle)
+    const b = this.bounds;
+    if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) return true;
     const { col, row } = this.worldToCell(x, z);
     return this.getCell(col, row);
   }
@@ -78,6 +81,9 @@ export class MaskManager {
    * @param {number} radius  World units — typical robot footprint ~0.3
    */
   isBlockedCircle(x, z, radius) {
+    // Centre outside mask bounds → blocked (treat out-of-bounds as solid wall)
+    const b = this.bounds;
+    if (x < b.minX || x > b.maxX || z < b.minZ || z > b.maxZ) return true;
     const radiusCells = Math.ceil(radius / this.resolution);
     const { col: cx, row: cz } = this.worldToCell(x, z);
     for (let dr = -radiusCells; dr <= radiusCells; dr++) {
@@ -201,5 +207,48 @@ export class MaskManager {
     let n = 0;
     for (let i = 0; i < this.data.length; i++) if (this.data[i]) n++;
     return n;
+  }
+
+  /**
+   * Return a random position (in Three.js world space) whose robot footprint
+   * is entirely free of obstacles.
+   *
+   * The mask stores z in "mask space" where z_mask = −z_threejs.
+   * This method returns {x, z} already converted to Three.js coordinates so
+   * the caller can pass them directly to robot.setPosition(x, y, z).
+   *
+   * @param {number} [robotRadius=0.35]  Footprint radius in world units.
+   * @returns {{ x: number, z: number }}
+   */
+  randomFreePosition(robotRadius = 0.35) {
+    // Collect all free cells
+    const free = [];
+    for (let row = 0; row < this.gridH; row++) {
+      for (let col = 0; col < this.gridW; col++) {
+        if (!this.data[row * this.gridW + col]) free.push([row, col]);
+      }
+    }
+    if (free.length === 0) return { x: 0, z: 0 };
+
+    // Fisher-Yates shuffle for O(n) random order without replacement
+    for (let i = free.length - 1; i > 0; i--) {
+      const j = Math.floor(Math.random() * (i + 1));
+      const tmp = free[i]; free[i] = free[j]; free[j] = tmp;
+    }
+
+    for (const [row, col] of free) {
+      // Convert cell → display-world Z (same convention as worldToCell: row 0 = maxZ)
+      const xm = this.bounds.minX + (col + 0.5) * this.resolution;
+      const zm = this.bounds.maxZ - (row + 0.5) * this.resolution;
+      if (!this.isBlockedCircle(xm, zm, robotRadius)) {
+        return { x: xm, z: -zm }; // convert display-z → Three.js z
+      }
+    }
+
+    // Fallback: return first free cell centre even if footprint overlaps
+    const [row, col] = free[0];
+    const xm = this.bounds.minX + (col + 0.5) * this.resolution;
+    const zm = this.bounds.maxZ - (row + 0.5) * this.resolution;
+    return { x: xm, z: -zm };
   }
 }

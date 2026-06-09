@@ -342,11 +342,27 @@ wss.on('connection', (ws, req) => {
         frontendClient.send(JSON.stringify({
           type: 'reset_robot',
           x:        msg.x        ?? 0,
-          y:        msg.y        ?? 0.3,
+          y:        msg.y        ?? 0.50,
           z:        msg.z        ?? 0,
           rotation: msg.rotation ?? 0,
         }));
         console.log('Forwarded reset_robot to frontend');
+      }
+
+      // Handle reset_robot_random from robot client → forward to frontend
+      if (msg.type === 'reset_robot_random' && frontendClient) {
+        frontendClient.send(JSON.stringify({
+          type:         'reset_robot_random',
+          y:            msg.y            ?? 0.50,
+          robot_radius: msg.robot_radius ?? 0.35,
+        }));
+        console.log('Forwarded reset_robot_random to frontend');
+      }
+
+      // Handle robot_pose from frontend → forward to robot client
+      if (msg.type === 'robot_pose' && robotClient) {
+        robotClient.send(JSON.stringify(msg));
+        console.log(`Forwarded robot_pose to robot client: x=${msg.x?.toFixed(2)} z=${msg.z?.toFixed(2)} rot=${msg.rotation?.toFixed(2)}`);
       }
       
       // Handle rendered images from frontend → forward to robot client
