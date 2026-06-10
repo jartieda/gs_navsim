@@ -16,7 +16,7 @@ const ROBOT_RADIUS = 0.3;
  */
 export function setupSocket(
   robot, scene, camera, renderer, cameraController,
-  maskManager = null, onMovementCallback = null,
+  maskManager = null, onMovementCallback = null, onLoadSceneCallback = null,
 ) {
   const socket = new WebSocket('ws://localhost:8081');
 
@@ -128,6 +128,19 @@ export function setupSocket(
         socket.send(JSON.stringify({ type: 'robot_pose', x, y, z, rotation: rot }));
         captureAndSendImage(socket, renderer, robot);
         console.log(`Random reset to (${x.toFixed(2)}, ${z.toFixed(2)}) rot=${rot.toFixed(2)}`);
+
+      } else if (msg.type === 'load_scene') {
+        if (onLoadSceneCallback) {
+          onLoadSceneCallback(msg.scene_id)
+            .then(() => {
+              socket.send(JSON.stringify({ type: 'scene_loaded', scene_id: msg.scene_id }));
+              console.log(`Scene loaded: ${msg.scene_id}`);
+            })
+            .catch(err => {
+              socket.send(JSON.stringify({ type: 'scene_load_error', scene_id: msg.scene_id, error: String(err) }));
+              console.error(`Scene load error: ${msg.scene_id}`, err);
+            });
+        }
       }
 
     } catch (error) {
@@ -143,12 +156,27 @@ export function setupSocket(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
+// Reusable 96×96 capture canvas — created once, never recreated.
+// Matches NOMAD's input size so Python doesn't need to resize.
+const CAPTURE_W = 96;
+const CAPTURE_H = 96;
+let _captureCanvas = null;
+let _captureCtx    = null;
+
 function captureAndSendImage(socket, renderer) {
-  console.log('Frontend: Capturing and sending image...');
-  const image = renderer.domElement.toDataURL('image/png');
+  if (!_captureCanvas) {
+    _captureCanvas = document.createElement('canvas');
+    _captureCanvas.width  = CAPTURE_W;
+    _captureCanvas.height = CAPTURE_H;
+    _captureCtx = _captureCanvas.getContext('2d');
+  }
+  // Downscale the full renderer canvas → 96×96 in one GPU-accelerated blit
+  _captureCtx.drawImage(renderer.domElement, 0, 0, CAPTURE_W, CAPTURE_H);
+  // JPEG is ~5-10× smaller than PNG and much faster to encode
+  const image = _captureCanvas.toDataURL('image/jpeg', 0.8);
   const timestamp = new Date().toISOString();
   socket.send(JSON.stringify({ type: 'rendered_image', data: image, timestamp }));
-  console.log('Frontend: Sent rendered image, size:', image.length);
+  console.log('Frontend: Sent rendered image (JPEG 96×96), size:', image.length);
 }
 
 /** Briefly shows the on-screen collision indicator overlay. */

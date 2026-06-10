@@ -390,6 +390,22 @@ wss.on('connection', (ws, req) => {
           position: msg.position,
         }));
       }
+
+      // ── Scene loading: robot requests scene change → frontend, result back ──
+      if (msg.type === 'load_scene' && frontendClient) {
+        frontendClient.send(JSON.stringify({ type: 'load_scene', scene_id: msg.scene_id }));
+        console.log(`Forwarded load_scene: ${msg.scene_id}`);
+      }
+
+      if (msg.type === 'scene_loaded' && robotClient) {
+        robotClient.send(JSON.stringify(msg));
+        console.log(`Forwarded scene_loaded: ${msg.scene_id}`);
+      }
+
+      if (msg.type === 'scene_load_error' && robotClient) {
+        robotClient.send(JSON.stringify(msg));
+        console.log(`Forwarded scene_load_error: ${msg.scene_id}`);
+      }
       
     } catch (error) {
       console.error('Error processing message:', error);

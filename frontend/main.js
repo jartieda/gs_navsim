@@ -80,25 +80,34 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Setup controls
   const keyboardControls = new KeyboardControls(robot, cameraController, renderer, scene, updateDisplay, maskManager);
-  
-  // Main render loop with FPS monitoring
+
+  // ── On-demand render ──────────────────────────────────────────────────────
+  // The rAF loop only draws when something changed. Socket commands and
+  // keyboard input already call renderer.render() directly, so the rAF
+  // loop is only needed for resize, scene-load, and other one-off changes.
+  let _needsRender = true; // render the initial (empty) scene once
+  function requestRender() { _needsRender = true; }
+
+  // Main render loop — lightweight when idle
   function animate() {
     requestAnimationFrame(animate);
-    
-    // Update FPS counter
+
+    // Always update FPS counter
     updateFPS();
-    
-    // Update sorting for current render mode
-    if (currentPointCloud) {
-      updateObjectSorting(scene, camera);
+
+    // Only sort + draw when something changed
+    if (_needsRender) {
+      _needsRender = false;
+      if (currentPointCloud) updateObjectSorting(scene, camera);
+      renderer.render(scene, camera);
     }
-    
-    // Render the scene
-    renderer.render(scene, camera);
   }
   
   // Start the render loop
   animate();
+
+  // Re-render once after any window resize (camera/renderer size already updated in renderer.js)
+  window.addEventListener('resize', requestRender);
   
   // Function to update robot position display
   function updateRobotDisplay() {
@@ -141,7 +150,7 @@ document.addEventListener('DOMContentLoaded', () => {
   
   // Setup socket communication
   console.log('Setting up socket communication...');
-  const socket = setupSocket(robot, scene, camera, renderer, cameraController, maskManager, updateDisplay);
+  const socket = setupSocket(robot, scene, camera, renderer, cameraController, maskManager, updateDisplay, loadSceneFromServer);
   if (socket) {
     console.log('Socket setup completed successfully');
   } else {
@@ -229,6 +238,7 @@ document.addEventListener('DOMContentLoaded', () => {
     
     // Update displays
     updateDisplay();
+    requestRender();
     
     console.log('Robot position reset to origin');
   });
@@ -267,6 +277,7 @@ document.addEventListener('DOMContentLoaded', () => {
       }
     }
 
+    requestRender();
     console.log('Render mode changed to:', mode);
   });
 
@@ -291,6 +302,7 @@ document.addEventListener('DOMContentLoaded', () => {
         currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
       }
       
+      requestRender();
       console.log('Harmonic degree changed to:', degree);
     }
   });
@@ -315,6 +327,7 @@ document.addEventListener('DOMContentLoaded', () => {
       if (currentMode === 'gaussian') {
         currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
       }
+      requestRender();
       console.log('Point scale changed to:', scale);
     }
   });
@@ -339,6 +352,7 @@ document.addEventListener('DOMContentLoaded', () => {
         const scale = parseFloat(pointScale.value);
         
         currentPointCloud.material = loader.createGaussianSplatMaterial_ellipso(degree, scale, chi);
+        requestRender();
         console.log('Chi scale changed to:', chi);
       }
     }
@@ -381,6 +395,7 @@ document.addEventListener('DOMContentLoaded', () => {
       robot.updateRobotMarker(robotMarker);
       cameraController.update();
       updateDisplay();
+      requestRender();
 
       const positions = pointCloud.geometry.attributes.position.array;
       maskEditor.setScenePoints(positions);
@@ -408,10 +423,11 @@ document.addEventListener('DOMContentLoaded', () => {
     } catch (err) {
       console.error('Error loading scene:', err);
       fileInfo.textContent = `Error loading scene: ${err.message}`;
+      throw err;
     }
   }
 
-  // Populate scene dropdown on startup
+  // Populate scene dropdown on startup and auto-load a random scene
   fetch('/api/scenes')
     .then(r => r.json())
     .then(data => {
@@ -422,6 +438,9 @@ document.addEventListener('DOMContentLoaded', () => {
           opt.textContent = s.id;
           sceneSelector.appendChild(opt);
         });
+        const randomScene = data.scenes[Math.floor(Math.random() * data.scenes.length)];
+        sceneSelector.value = randomScene.id;
+        loadSceneFromServer(randomScene.id);
       }
     })
     .catch(err => console.warn('Could not fetch scene list:', err));
