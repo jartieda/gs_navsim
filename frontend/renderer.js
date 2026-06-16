@@ -347,7 +347,9 @@ function updatePointCloudSorting(scene, camera) {
 }
 
 // Export the sorting function for use in main render loop
-export function updateObjectSorting(scene, camera) {
+export function updateObjectSorting(scene, camera, force = false) {
+  if (!currentPointCloud) return;
+
   // Uniforms must update every frame (cameraPosition, focal, viewport)
   updateSplatUniforms(camera);
 
@@ -356,7 +358,7 @@ export function updateObjectSorting(scene, camera) {
   const quatDot = Math.abs(_lastSortCamQuat.dot(camera.quaternion));
   const cameraMoved = posDeltaSq > 1e-6 || quatDot < 0.9999995;
 
-  if (cameraMoved) {
+  if (force || cameraMoved) {
     _lastSortCamPos.copy(camera.position);
     _lastSortCamQuat.copy(camera.quaternion);
     updateSorting(scene, camera);

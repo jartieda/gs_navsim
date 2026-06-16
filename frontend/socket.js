@@ -2,6 +2,8 @@
 // Handles socket communication for robot commands.
 // Supports optional collision detection via a MaskManager instance.
 
+import { updateObjectSorting } from './renderer.js';
+
 // Robot footprint radius used for collision checks (world units).
 const ROBOT_RADIUS = 0.3;
 
@@ -33,29 +35,37 @@ export function setupSocket(
       if (msg.type === 'movement_command') {
         console.log('Processing movement command:', msg.command);
 
-        // ── Collision pre-check ──────────────────────────────────────────────
-        if (maskManager) {
-          const projected = robot.getProjectedPosition(msg.command, msg.value);
-          if (maskManager.isBlockedCircle(projected.x, -projected.z, ROBOT_RADIUS)) {
-            console.warn('Collision detected — movement blocked');
-            // Notify robot client of collision
-            socket.send(JSON.stringify({
-              type: 'collision_event',
-              position: { x: robot.position.x, z: robot.position.z },
-            }));
-            // Flash visual indicator in the browser
-            _showCollisionFlash();
-            // Still render current view and send image so robot gets an observation
-            renderer.render(scene, camera);
-            captureAndSendImage(socket, renderer, robot);
-            return; // skip movement application
-          }
-        }
+        const sendCollisionEvent = () => {
+          console.warn('Collision detected — linear movement blocked');
+          socket.send(JSON.stringify({
+            type: 'collision_event',
+            position: { x: robot.position.x, z: robot.position.z },
+          }));
+          _showCollisionFlash();
+        };
 
         // ── Apply movement ───────────────────────────────────────────────────
         if (msg.command === 'forward') {
+          if (maskManager) {
+            const projected = robot.getProjectedPosition('forward', msg.value);
+            if (maskManager.isBlockedCircle(projected.x, -projected.z, ROBOT_RADIUS)) {
+              sendCollisionEvent();
+              renderForCapture(scene, camera, renderer);
+              captureAndSendImage(socket, renderer, robot);
+              return;
+            }
+          }
           robot.moveForward(msg.value != null ? msg.value : undefined);
         } else if (msg.command === 'backward') {
+          if (maskManager) {
+            const projected = robot.getProjectedPosition('backward', msg.value);
+            if (maskManager.isBlockedCircle(projected.x, -projected.z, ROBOT_RADIUS)) {
+              sendCollisionEvent();
+              renderForCapture(scene, camera, renderer);
+              captureAndSendImage(socket, renderer, robot);
+              return;
+            }
+          }
           robot.moveBackward(msg.value != null ? msg.value : undefined);
         } else if (msg.command === 'turn_left') {
           robot.turnLeft(msg.value || Math.PI / 8);
@@ -69,8 +79,20 @@ export function setupSocket(
           }
         } else if (msg.command === 'set_velocity') {
           console.log(`Setting velocity: v=${msg.value[0]}, w=${msg.value[1]}`);
-          const v = msg.value[0] || 0;
+          let v = msg.value[0] || 0;
           const w = msg.value[1] || 0;
+
+          // For combined velocity commands, only block linear component.
+          // Keep rotation enabled so the robot can recover near obstacles.
+          if (maskManager && Math.abs(v) > 0.01) {
+            const linearCmd = v > 0 ? 'forward' : 'backward';
+            const projected = robot.getProjectedPosition(linearCmd, Math.abs(v));
+            if (maskManager.isBlockedCircle(projected.x, -projected.z, ROBOT_RADIUS)) {
+              sendCollisionEvent();
+              v = 0;
+            }
+          }
+
           if (Math.abs(v) > 0.01) {
             if (v > 0) robot.moveForward(Math.abs(v));
             else robot.moveBackward(Math.abs(v));
@@ -83,13 +105,14 @@ export function setupSocket(
 
 
         if (cameraController) cameraController.update();
-        renderer.render(scene, camera);
+        renderForCapture(scene, camera, renderer);
         if (onMovementCallback) onMovementCallback();
 
         captureAndSendImage(socket, renderer, robot);
 
       } else if (msg.type === 'capture_image') {
         console.log('Frontend: Received capture_image request');
+        renderForCapture(scene, camera, renderer);
         captureAndSendImage(socket, renderer, robot);
 
       } else if (msg.type === 'reset_robot') {
@@ -100,7 +123,7 @@ export function setupSocket(
         robot.setPosition(x, y, z);
         robot.setRotation(rot);
         if (cameraController) cameraController.update();
-        renderer.render(scene, camera);
+        renderForCapture(scene, camera, renderer);
         if (onMovementCallback) onMovementCallback();
         captureAndSendImage(socket, renderer, robot);
         console.log(`Robot reset to (${x}, ${y}, ${z}) rot=${rot}`);
@@ -122,7 +145,7 @@ export function setupSocket(
         robot.setPosition(x, y, z);
         robot.setRotation(rot);
         if (cameraController) cameraController.update();
-        renderer.render(scene, camera);
+        renderForCapture(scene, camera, renderer);
         if (onMovementCallback) onMovementCallback();
         // Send pose back to robot client so it can initialise dead-reckoning
         socket.send(JSON.stringify({ type: 'robot_pose', x, y, z, rotation: rot }));
@@ -156,12 +179,32 @@ export function setupSocket(
 
 // ── Helpers ────────────────────────────────────────────────────────────────
 
-// Reusable 96×96 capture canvas — created once, never recreated.
-// Matches NOMAD's input size so Python doesn't need to resize.
-const CAPTURE_W = 96;
-const CAPTURE_H = 96;
+// Reusable capture canvas — created once, never recreated.
+// Default matches NOMAD input size, but can be overridden via URL params:
+//   ?capture_w=240&capture_h=240
+const DEFAULT_CAPTURE_SIZE = 96;
+const _params = new URLSearchParams(window.location.search);
+const CAPTURE_W = Math.max(
+  16,
+  parseInt(_params.get('capture_w') || String(DEFAULT_CAPTURE_SIZE), 10) || DEFAULT_CAPTURE_SIZE,
+);
+const CAPTURE_H = Math.max(
+  16,
+  parseInt(_params.get('capture_h') || String(CAPTURE_W), 10) || CAPTURE_W,
+);
 let _captureCanvas = null;
 let _captureCtx    = null;
+
+function renderForCapture(scene, camera, renderer) {
+  scene.updateMatrixWorld(true);
+  camera.updateMatrixWorld(true);
+
+  // Double pass helps avoid first-frame artifacts after reset/spawn.
+  updateObjectSorting(scene, camera, true);
+  renderer.render(scene, camera);
+  updateObjectSorting(scene, camera, true);
+  renderer.render(scene, camera);
+}
 
 function captureAndSendImage(socket, renderer) {
   if (!_captureCanvas) {
@@ -170,13 +213,13 @@ function captureAndSendImage(socket, renderer) {
     _captureCanvas.height = CAPTURE_H;
     _captureCtx = _captureCanvas.getContext('2d');
   }
-  // Downscale the full renderer canvas → 96×96 in one GPU-accelerated blit
+  // Resample the full renderer canvas to configured size in one blit.
   _captureCtx.drawImage(renderer.domElement, 0, 0, CAPTURE_W, CAPTURE_H);
   // JPEG is ~5-10× smaller than PNG and much faster to encode
   const image = _captureCanvas.toDataURL('image/jpeg', 0.8);
   const timestamp = new Date().toISOString();
   socket.send(JSON.stringify({ type: 'rendered_image', data: image, timestamp }));
-  console.log('Frontend: Sent rendered image (JPEG 96×96), size:', image.length);
+  console.log(`Frontend: Sent rendered image (JPEG ${CAPTURE_W}x${CAPTURE_H}), size:`, image.length);
 }
 
 /** Briefly shows the on-screen collision indicator overlay. */

@@ -1256,7 +1256,13 @@ export class GaussianSplatLoader {
         this.depthData = new Float32Array(numVertices);
     }
 
-    const mv = pointCloudMesh.modelViewMatrix.elements;
+    // Ensure matrices reflect the current robot/camera pose even when capture
+    // is requested outside the continuous render loop.
+    camera.updateMatrixWorld(true);
+    pointCloudMesh.updateMatrixWorld(true);
+    if (!this._mvMatrix) this._mvMatrix = new THREE.Matrix4();
+    this._mvMatrix.multiplyMatrices(camera.matrixWorldInverse, pointCloudMesh.matrixWorld);
+    const mv = this._mvMatrix.elements;
     
     // 2. Calcular profundidad relativa al plano de la cámara (Z-depth)
     // En Three.js, la cámara mira hacia -Z. Buscamos los valores más negativos.

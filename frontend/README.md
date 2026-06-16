@@ -19,4 +19,13 @@ This web-based simulator uses Three.js to visualize robotic navigation with Gaus
 3. Load a `.ply` file and use arrow keys or socket commands to navigate
 4. Export images using the button
 
+## Robot Camera Capture Size
+
+The WebSocket image sent to robot clients is configurable via URL parameters.
+
+- Default: `96x96`
+- Example for larger image: `http://localhost:3000/?capture_w=240&capture_h=240`
+
+If only `capture_w` is provided, height defaults to the same value.
+
 **Note**: The frontend is now served directly from the backend server, no need to open HTML files separately.
