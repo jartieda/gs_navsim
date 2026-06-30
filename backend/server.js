@@ -12,7 +12,8 @@ const MASKS_DIR = path.join(__dirname, 'masks');
 if (!fs.existsSync(MASKS_DIR)) fs.mkdirSync(MASKS_DIR);
 
 // Directory containing scene data (occupancy + PLY files)
-const DATA_DIR = '/mnt/c/data';
+// Remote-friendly: override with GS_DATA_DIR (e.g. /workspace/data)
+const DATA_DIR = process.env.GS_DATA_DIR || '/mnt/c/data';
 
 // Middleware
 app.use(express.json({ limit: '10mb' }));
